@@ -7,7 +7,7 @@ from ui.theme import card
 
 
 class PlaybackPanel:
-    def __init__(self, parent, on_generate, on_cancel, on_play, on_stop, on_save, on_save_srt, on_open_folder, row=None):
+    def __init__(self, parent, on_generate, on_cancel, on_play, on_stop, on_save, on_save_srt, on_open_folder, row=None, on_preview=None):
         if row is not None:
             frame = card(parent, row, "🎧  Playback & Export")
             btn_height = 44
@@ -54,6 +54,15 @@ class PlaybackPanel:
                 fg_color=COLORS["accent_primary"], hover_color=COLORS["accent_secondary"],
                 corner_radius=10, height=btn_height, command=on_generate)
             self.generate_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
+
+            self.preview_btn = None
+            if on_preview is not None:
+                self.preview_btn = ctk.CTkButton(
+                    btn_row, text="🎧  Preview", font=FONTS["button"],
+                    fg_color=COLORS["bg_input"], hover_color=COLORS["accent_secondary"],
+                    border_color=COLORS["accent_secondary"], border_width=2,
+                    corner_radius=10, height=btn_height, width=110, command=on_preview)
+                self.preview_btn.pack(side="left", padx=6)
 
             self.cancel_btn = ctk.CTkButton(
                 btn_row, text="✖  Cancel", font=FONTS["button"],
@@ -106,6 +115,15 @@ class PlaybackPanel:
                 fg_color=COLORS["accent_primary"], hover_color=COLORS["accent_secondary"],
                 corner_radius=10, height=btn_height, command=on_generate)
             self.generate_btn.pack(side="left", expand=True, fill="x")
+
+            self.preview_btn = None
+            if on_preview is not None:
+                self.preview_btn = ctk.CTkButton(
+                    row1, text="🎧  Preview", font=FONTS["button"],
+                    fg_color=COLORS["bg_input"], hover_color=COLORS["accent_secondary"],
+                    border_color=COLORS["accent_secondary"], border_width=2,
+                    corner_radius=10, height=btn_height, width=110, command=on_preview)
+                self.preview_btn.pack(side="left", padx=(6, 0))
 
             row2 = ctk.CTkFrame(frame, fg_color="transparent")
             row2.pack(fill="x", padx=16, pady=(0, 14))

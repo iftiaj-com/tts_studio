@@ -1,30 +1,35 @@
-import os
-import gc
-import torch
-from faster_whisper import WhisperModel
+from core.model_cache import MODEL_CACHE
 
-# Global model instance to avoid reloading if not necessary, but we can clean it up
-_whisper_model = None
+_WHISPER_KEY = ("whisper", "base")
+
+
+class SubtitleCancelled(Exception):
+    """Raised when the user cancels mid-transcription."""
+
 
 def get_whisper_model():
-    global _whisper_model
-    if _whisper_model is None:
-        # Load the base model, optimize for 4GB VRAM
-        _whisper_model = WhisperModel(
-            model_size_or_path="base", 
-            device="cuda" if torch.cuda.is_available() else "cpu", 
-            compute_type="float16" if torch.cuda.is_available() else "int8"
+    """Return the cached Whisper model, loading it on first use.
+
+    The model stays resident between runs and is evicted automatically by
+    MODEL_CACHE after ~5 minutes of inactivity, so back-to-back generations
+    skip the multi-second reload without permanently hogging VRAM.
+    """
+    def _load():
+        import torch
+        from faster_whisper import WhisperModel
+        use_cuda = torch.cuda.is_available()
+        # Base model, sized for ~4GB VRAM
+        return WhisperModel(
+            model_size_or_path="base",
+            device="cuda" if use_cuda else "cpu",
+            compute_type="float16" if use_cuda else "int8",
         )
-    return _whisper_model
+    return MODEL_CACHE.get(_WHISPER_KEY, _load)
+
 
 def unload_whisper_model():
-    global _whisper_model
-    if _whisper_model is not None:
-        del _whisper_model
-        _whisper_model = None
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+    """Manually release the Whisper model (RAM + VRAM)."""
+    MODEL_CACHE.clear(_WHISPER_KEY)
 
 def format_timestamp(seconds: float) -> str:
     """Convert seconds to SRT timestamp format (HH:MM:SS,mmm)."""
@@ -103,27 +108,39 @@ def group_words_into_phrases(words, max_chars=40, max_duration=3.0, max_gap=0.5)
         
     return phrases
 
-def generate_subtitles(audio_path: str, output_srt_path: str, status_cb=None, segmentation="word"):
+def generate_subtitles(audio_path: str, output_srt_path: str, status_cb=None,
+                       segmentation="word", check_cancel=None):
     """
     Generate subtitles using faster-whisper.
     segmentation: "word" for word-level, "sentence" for sentence/phrase-level.
+    check_cancel: optional callable returning True when the user cancelled;
+                  raises SubtitleCancelled so no partial SRT is written.
     """
+    def _cancelled():
+        return check_cancel is not None and check_cancel()
+
     if status_cb:
         status_cb("Loading transcription model...")
-        
+
     model = get_whisper_model()
-    
+
     if status_cb:
         status_cb("Generating subtitles...")
-        
+
+    if _cancelled():
+        raise SubtitleCancelled()
+
+    # transcribe() returns a lazy generator — cancellation is checked between
+    # segments, so a long transcription aborts within one segment's latency.
     segments, info = model.transcribe(audio_path, word_timestamps=True)
-    
-    # Collect all words from segments
+
     all_words = []
     for segment in segments:
+        if _cancelled():
+            raise SubtitleCancelled()
         if segment.words:
             all_words.extend(segment.words)
-            
+
     with open(output_srt_path, "w", encoding="utf-8") as f:
         if segmentation == "sentence" or segmentation == "phrase":
             phrases = group_words_into_phrases(all_words)
@@ -143,7 +160,8 @@ def generate_subtitles(audio_path: str, output_srt_path: str, status_cb=None, se
                 f.write(f"{word.word.strip()}\n\n")
                 srt_index += 1
 
-    unload_whisper_model()
-    
+    # NOTE: the model intentionally stays cached — MODEL_CACHE evicts it
+    # after 5 idle minutes, and unload_whisper_model() frees it on demand.
+
     if status_cb:
         status_cb("Subtitles generated successfully.")

@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Virtual Environment
+venv_311/
+.venv/
+venv/
+env/
+ENV/
+bin/
+lib/
+include/
+
+# Build & Distribution (PyInstaller)
+build/
+dist/
+*.spec
+*.manifest
+
+# Model download caches, weights, and configurations
+.cache/
+models/
+*.onnx
+*.pth
+*.pt
+
+# Output directory contents
+# The folder itself is tracked via output/.gitignore, but actual outputs should not be committed.
+output/*
+!output/.gitignore
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+.project-root
+
+# Operating System files
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Kokoro ONNX voice pack (auto-downloaded by engines/kokoro_engine.py)
+voices.bin

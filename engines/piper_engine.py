@@ -4,6 +4,7 @@ engines/piper_engine.py  –  Piper TTS adapter
 import os
 import wave
 from engines.base import BaseTTSEngine
+from core.model_cache import MODEL_CACHE
 
 try:
     import piper  # noqa: F401
@@ -40,7 +41,9 @@ class PiperEngine(BaseTTSEngine):
                 f"Piper model missing at {model_path}! Download an ONNX model file first."
             )
 
-        voice    = PiperVoice.load(model_path)
+        # Cached per model file; idle-evicted by MODEL_CACHE after 5 min.
+        voice    = MODEL_CACHE.get(("piper", model_path),
+                                   lambda: PiperVoice.load(model_path))
         wav_path = os.path.join(tmp_dir, "output.wav")
         with wave.open(wav_path, "wb") as w:
             voice.synthesize_wav(text, w)

@@ -10,6 +10,7 @@ import sys
 import io
 import time
 import wave
+import atexit
 import shutil
 import tempfile
 import threading
@@ -73,6 +74,12 @@ class TTSStudioApp(ctk.CTk):
         self._is_generating      = False
         self._playback_thread    = None
         self._stop_event         = threading.Event()
+        self._tmp_dirs           = set()   # every mkdtemp we own, for cleanup
+
+        # Best-effort temp cleanup on any interpreter exit (incl. unhandled
+        # exceptions). Hard crashes are covered by the startup sweep in
+        # tts_app.py (core.temp_cleanup.sweep_orphan_temp_dirs).
+        atexit.register(self._cleanup_tmp_dirs)
 
         # Engines
         self._available_engines = get_available_engines()
@@ -144,6 +151,7 @@ class TTSStudioApp(ctk.CTk):
         self._play_panel = PlaybackPanel(
             left_col,
             on_generate=self._on_generate,
+            on_preview=self._on_preview,
             on_cancel=self._on_cancel,
             on_play=self._on_play,
             on_stop=self._on_stop,
@@ -196,12 +204,32 @@ class TTSStudioApp(ctk.CTk):
     # ──────────────────────────────────────────────────────────────
 
     def _on_generate(self):
+        self._start_generation(preview=False)
+
+    def _on_preview(self):
+        """Fast snippet preview: synthesize only the first sentence with the
+        currently active voice + effects so the user can audition instantly."""
+        self._start_generation(preview=True)
+
+    @staticmethod
+    def _snippet_of(text, max_chars=150):
+        """First sentence of *text*, capped at *max_chars* on a word boundary."""
+        parts = re.split(r'(?<=[.!?])\s+', text, maxsplit=1)
+        snippet = parts[0] if parts else text
+        if len(snippet) > max_chars:
+            cut = snippet[:max_chars].rsplit(" ", 1)[0]
+            snippet = cut or snippet[:max_chars]
+        return snippet
+
+    def _start_generation(self, preview=False):
         if self._is_generating:
             return
         text = self._text_panel.get_text().strip()
         if not text:
             self._set_status("⚠  Please enter some text first", COLORS["warning"])
             return
+        if preview:
+            text = self._snippet_of(text)
 
         self._temp_playback_file = None
         self._temp_save_file     = None
@@ -213,15 +241,21 @@ class TTSStudioApp(ctk.CTk):
         self._stop_event.clear()
 
         pp = self._play_panel
-        pp.generate_btn.configure(state="disabled", text="Generating…")
+        pp.generate_btn.configure(state="disabled",
+                                  text="Previewing…" if preview else "Generating…")
         pp.cancel_btn.configure(state="normal", text="✖  Cancel")
         pp.set_generating(True)
-        for btn in (pp.play_btn, pp.stop_btn, pp.save_btn, pp.save_srt_btn, pp.open_folder_btn):
+        buttons = [pp.play_btn, pp.stop_btn, pp.save_btn, pp.save_srt_btn, pp.open_folder_btn]
+        if getattr(pp, "preview_btn", None):
+            buttons.append(pp.preview_btn)
+        for btn in buttons:
             btn.configure(state="disabled")
         pp.progress.set(0)
-        self._set_status("Generating speech…", COLORS["warning"])
+        self._set_status("Generating preview…" if preview else "Generating speech…",
+                         COLORS["warning"])
 
-        threading.Thread(target=self._generate_worker, args=(text,), daemon=True).start()
+        threading.Thread(target=self._generate_worker,
+                         args=(text, preview), daemon=True).start()
 
     def _on_cancel(self):
         if self._is_generating:
@@ -229,11 +263,13 @@ class TTSStudioApp(ctk.CTk):
             self._set_status("⌛  Cancelling…", COLORS["warning"])
             self._play_panel.cancel_btn.configure(state="disabled", text="Cancelling…")
 
-    def _on_generate_finish(self, playback_file):
+    def _on_generate_finish(self, playback_file, autoplay=False):
         self._is_generating = False
         pp = self._play_panel
         pp.generate_btn.configure(state="normal", text="⚡  Generate Speech")
         pp.set_generating(False)
+        if getattr(pp, "preview_btn", None):
+            pp.preview_btn.configure(state="normal")
         if playback_file is None:
             self._set_status("⏹  Generation cancelled", COLORS["warning"])
             pp.progress.set(0)
@@ -245,26 +281,39 @@ class TTSStudioApp(ctk.CTk):
             pp.save_srt_btn.configure(state="normal")
         else:
             pp.save_srt_btn.configure(state="disabled")
-        
+
         if self._temp_mp3:
             pp.open_folder_btn.configure(state="normal")
         self._set_status("✅  Speech generated successfully!", COLORS["success"])
+        if autoplay:
+            self._on_play()
 
     def _on_generate_error(self, error_msg):
         self._is_generating = False
         pp = self._play_panel
         pp.generate_btn.configure(state="normal", text="⚡  Generate Speech")
         pp.set_generating(False)
+        if getattr(pp, "preview_btn", None):
+            pp.preview_btn.configure(state="normal")
         pp.progress.set(0)
         self._set_status(f"❌  Error: {error_msg}", COLORS["error"])
         messagebox.showerror("Generation Error", error_msg)
 
-    def _generate_worker(self, text):
+    def _generate_worker(self, text, preview=False):
         def check_cancel():
             if self._stop_event.is_set():
                 self.after(0, self._on_generate_finish, None)
                 return True
             return False
+
+        def progress(frac):
+            self.after(0, lambda f=frac: self._play_panel.progress.set(f))
+
+        def status(msg):
+            self.after(0, lambda m=msg: self._set_status(m, COLORS["accent_primary"]))
+
+        def warn(msg):
+            self.after(0, lambda m=msg: self._set_status(m, COLORS["warning"]))
 
         try:
             import gc
@@ -276,7 +325,8 @@ class TTSStudioApp(ctk.CTk):
                 return
 
             tmp_dir = tempfile.mkdtemp(prefix="tts_studio_")
-            self.after(0, lambda: self._play_panel.progress.set(0.10))
+            self._tmp_dirs.add(tmp_dir)
+            progress(0.05)
 
             eng_settings  = self._engine_panel.get_settings()
             cust_settings = self._cust_panel.get_settings()
@@ -294,8 +344,7 @@ class TTSStudioApp(ctk.CTk):
             # Build per-engine kwargs
             kwargs = dict(
                 device=device_str,
-                status_cb=lambda msg: self.after(0, lambda m=msg: self._set_status(
-                    m, COLORS["accent_primary"])),
+                status_cb=status,
                 check_cancel=check_cancel,
                 lang_key=eng_settings["gtts_lang_key"],
                 voice_key=(
@@ -316,8 +365,8 @@ class TTSStudioApp(ctk.CTk):
             if "pyttsx3" in engine_name:
                 kwargs["rate"] = eng_settings["pyttsx3_rate"]
 
+            progress(0.10)
             result = engine.synthesize(text, tmp_dir, **kwargs)
-            print(f"DEBUG: result={result}")
             if check_cancel():
                 return
 
@@ -325,110 +374,106 @@ class TTSStudioApp(ctk.CTk):
             save_file     = result["save_file"]
             save_ext      = result["save_ext"]
             self._temp_srt = result.get("srt_file")
-            print(f"DEBUG: self._temp_srt={self._temp_srt}")
 
-            self.after(0, lambda: self._play_panel.progress.set(0.40))
+            progress(0.45)
 
-            # ── Skip silences ──────────────────────────────────────
-            if cust_settings["skip_silences"] and playback_file:
-                if check_cancel():
-                    return
-                self.after(0, lambda: self._set_status(
-                    "Removing silences…", COLORS["accent_primary"]))
+            # ── Post-processing plan ───────────────────────────────
+            # Everything below runs on ONE in-memory float32 array: the
+            # engine output is decoded once, every enabled DSP stage runs
+            # in RAM, and the result hits the disk exactly once at the end
+            # (plus one MP3 encode from the same in-memory buffer).
+            speed         = cust_settings["speed"]
+            needs_silence = cust_settings["skip_silences"]
+            needs_speed   = abs(speed - 1.0) > 0.01
+            active_fx     = [e for e in EFFECTS_REGISTRY
+                             if e["key"] != "normalize"
+                             and fx_active.get(e["key"], False)]
+            eq_enabled    = cust_settings.get("eq_enabled", False)
+            env_choice    = cust_settings["env_choice"]
+            needs_env     = env_choice != "None"
+            needs_norm    = fx_active.get("normalize", False)
+
+            dsp_stages = (int(needs_silence) + int(needs_speed) + len(active_fx)
+                          + int(eq_enabled) + int(needs_env) + int(needs_norm))
+            processed_seg = None   # in-memory AudioSegment for the final export
+
+            if dsp_stages and playback_file:
+                stages_done = 0
+
+                def step():
+                    # Advance the bar proportionally through the 0.45–0.80 window
+                    nonlocal stages_done
+                    stages_done += 1
+                    progress(0.45 + 0.35 * stages_done / dsp_stages)
+
                 try:
-                    seg    = AudioSegment.from_file(playback_file)
-                    chunks = pydub_silence.split_on_silence(
-                        seg, min_silence_len=200, silence_thresh=-40)
-                    if chunks:
-                        joined = chunks[0]
-                        for c in chunks[1:]:
-                            joined += c
-                        out = os.path.join(tmp_dir, "silence_skipped.wav")
-                        joined.export(out, format="wav")
-                        playback_file = save_file = out
-                        save_ext = ".wav"
-                except Exception as e:
-                    self.after(0, lambda err=str(e): self._set_status(
-                        f"⚠ Skip silences failed: {err}", COLORS["warning"]))
+                    seg = AudioSegment.from_file(playback_file)   # single decode
 
-            # ── Speed adjustment ───────────────────────────────────
-            speed = cust_settings["speed"]
-            if abs(speed - 1.0) > 0.01 and playback_file:
-                if check_cancel():
-                    return
-                self.after(0, lambda: self._set_status(
-                    f"Adjusting speed to {speed:.2f}x…", COLORS["accent_primary"]))
-                try:
-                    src = playback_file
-                    if src.endswith(".mp3"):
-                        converted = os.path.join(tmp_dir, "speed_converted.wav")
-                        AudioSegment.from_mp3(src).export(converted, format="wav")
-                        src = converted
-                    samples, sr = AudioEffects.load_wav_as_float(src)
-                    samples = AudioEffects.change_speed(samples, speed)
-                    out = os.path.join(tmp_dir, "speed_adjusted.wav")
-                    AudioEffects.save_float_as_wav(samples, sr, out)
-                    playback_file = save_file = out
-                    save_ext = ".wav"
-                except Exception as e:
-                    self.after(0, lambda err=str(e): self._set_status(
-                        f"⚠ Speed adjustment failed: {err}", COLORS["warning"]))
-
-            # ── Effects pipeline ───────────────────────────────────
-            normalize_key = "normalize"
-            heavy_fx = any(
-                fx_active.get(e["key"], False)
-                for e in EFFECTS_REGISTRY
-                if e["key"] != normalize_key
-            )
-            any_fx = heavy_fx or fx_active.get(normalize_key, False)
-            env_choice = cust_settings["env_choice"]
-
-            if (any_fx or env_choice != "None") and playback_file:
-                if check_cancel():
-                    return
-                status_msg = "Applying voice effects…" if any_fx else "Adding ambiance noise…"
-                self.after(0, lambda: self._set_status(status_msg, COLORS["accent_primary"]))
-                try:
-                    src = playback_file
-                    if src.endswith(".mp3"):
-                        conv = os.path.join(tmp_dir, "converted.wav")
-                        AudioSegment.from_mp3(src).export(conv, format="wav")
-                        src = conv
-                    samples, sr = AudioEffects.load_wav_as_float(src)
-                    self.after(0, lambda: self._play_panel.progress.set(0.50))
-
-                    for effect in EFFECTS_REGISTRY:
+                    # ── Skip silences (pydub, in memory) ───────────
+                    if needs_silence:
                         if check_cancel():
                             return
-                        if effect["key"] == "normalize":
-                            continue  # Run normalize at the end of the pipeline instead
-                        if not fx_active.get(effect["key"], False):
-                            continue
-                        fn     = effect["fn"]
+                        status("Removing silences…")
+                        chunks = pydub_silence.split_on_silence(
+                            seg, min_silence_len=200, silence_thresh=-40)
+                        if chunks:
+                            joined = chunks[0]
+                            for c in chunks[1:]:
+                                joined += c
+                            seg = joined
+                        step()
+
+                    # ── Decode once to float32 mono ────────────────
+                    seg  = seg.set_channels(1)
+                    sr   = seg.frame_rate
+                    peak = float(2 ** (8 * seg.sample_width - 1))
+                    samples = np.array(seg.get_array_of_samples(),
+                                       dtype=np.float32) / peak
+
+                    # ── Speed adjustment ───────────────────────────
+                    if needs_speed:
+                        if check_cancel():
+                            return
+                        status(f"Adjusting speed to {speed:.2f}x…")
+                        try:
+                            samples = AudioEffects.change_speed(samples, speed)
+                        except Exception as e:
+                            warn(f"⚠ Speed adjustment failed: {e}")
+                        step()
+
+                    # ── Voice effects ──────────────────────────────
+                    for effect in active_fx:
+                        if check_cancel():
+                            return
+                        status(f"Applying {effect['label'].split('  ')[-1]}…")
+                        fn        = effect["fn"]
                         kwargs_fx = effect.get("kwargs", {})
                         try:
                             samples = fn(samples, sr, **kwargs_fx)
                         except TypeError:
                             samples = fn(samples, **kwargs_fx)
+                        step()
 
-                    # ── Equalizer ─────────────────────────────────────────
-                    if cust_settings.get("eq_enabled", False):
+                    # ── Equalizer ──────────────────────────────────
+                    if eq_enabled:
                         if check_cancel():
                             return
-                        self.after(0, lambda: self._set_status("Applying equalizer…", COLORS["accent_primary"]))
+                        status("Applying equalizer…")
                         try:
-                            low_factor = 10 ** (cust_settings["eq_bass"] / 20.0)
-                            mid_factor = 10 ** (cust_settings["eq_mids"] / 20.0)
+                            low_factor  = 10 ** (cust_settings["eq_bass"] / 20.0)
+                            mid_factor  = 10 ** (cust_settings["eq_mids"] / 20.0)
                             high_factor = 10 ** (cust_settings["eq_treble"] / 20.0)
-                            samples = AudioEffects.three_band_eq(samples, sr, low_factor, mid_factor, high_factor)
+                            samples = AudioEffects.three_band_eq(
+                                samples, sr, low_factor, mid_factor, high_factor)
                         except Exception as eq_err:
-                            self.after(0, lambda err=str(eq_err): self._set_status(
-                                f"⚠ EQ failed: {err}", COLORS["warning"]))
+                            warn(f"⚠ EQ failed: {eq_err}")
+                        step()
 
-                    # Ambiance mix
-                    env_choice = cust_settings["env_choice"]
-                    if env_choice != "None":
+                    # ── Ambiance mix ───────────────────────────────
+                    if needs_env:
+                        if check_cancel():
+                            return
+                        status("Adding ambiance noise…")
                         amb_path = (cust_settings["custom_amb_path"]
                                     if env_choice == "Custom File..."
                                     else env_choice)
@@ -436,67 +481,87 @@ class TTSStudioApp(ctk.CTk):
                             samples = AudioEffects.add_environment_sound(
                                 samples, sr, amb_path,
                                 volume=cust_settings["env_volume"])
+                        step()
 
-                    # Post-mix normalization (always last)
-                    if fx_active.get("normalize", False):
+                    # ── Post-mix normalization (always last) ───────
+                    if needs_norm:
+                        if check_cancel():
+                            return
                         samples = AudioEffects.normalize(samples)
+                        step()
 
-                    self.after(0, lambda: self._play_panel.progress.set(0.65))
+                    # ── Single disk write ──────────────────────────
+                    int16 = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16)
+                    processed_seg = AudioSegment(
+                        data=int16.tobytes(), sample_width=2,
+                        frame_rate=sr, channels=1)
                     out = os.path.join(tmp_dir, "processed.wav")
-                    AudioEffects.save_float_as_wav(samples, sr, out)
+                    processed_seg.export(out, format="wav")
                     playback_file = save_file = out
                     save_ext = ".wav"
 
                 except Exception as fx_err:
-                    self.after(0, lambda err=str(fx_err): self._set_status(
-                        f"⚠ Effects failed: {err}", COLORS["warning"]))
+                    # Fall back to the raw engine output
+                    processed_seg = None
+                    warn(f"⚠ Effects failed: {fx_err}")
 
-            self.after(0, lambda: self._play_panel.progress.set(0.90))
+            progress(0.80)
 
             # ── Subtitles generation ───────────────────────────────
-            if cust_settings.get("auto_subtitle", False) and playback_file:
+            if not preview and cust_settings.get("auto_subtitle", False) and playback_file:
                 if check_cancel():
                     return
+                from core.subtitles import generate_subtitles, SubtitleCancelled
                 try:
-                    from core.subtitles import generate_subtitles
                     srt_out = os.path.join(tmp_dir, "final.srt")
-                    
-                    def _sub_cb(msg):
-                        self.after(0, lambda m=msg: self._set_status(m, COLORS["accent_primary"]))
-                        
                     seg_mode = cust_settings.get("sub_segmentation", "word")
-                    generate_subtitles(playback_file, srt_out, status_cb=_sub_cb, segmentation=seg_mode)
+                    generate_subtitles(playback_file, srt_out, status_cb=status,
+                                       segmentation=seg_mode,
+                                       check_cancel=self._stop_event.is_set)
                     self._temp_srt = srt_out
+                except SubtitleCancelled:
+                    self.after(0, self._on_generate_finish, None)
+                    return
                 except Exception as e:
                     print(f"Subtitle generation failed: {e}")
-                    self.after(0, lambda err=str(e): self._set_status(f"⚠ Subtitles failed: {err}", COLORS["warning"]))
+                    warn(f"⚠ Subtitles failed: {e}")
 
-            # ── MP3 export for save ────────────────────────────────
+            progress(0.92)
+
+            # ── MP3 export for save (from memory when possible) ────
             self._temp_mp3 = None
-            if save_file and not save_file.endswith(".mp3"):
+            if preview:
+                pass   # previews are playback-only; skip the MP3 encode
+            elif save_file and save_file.endswith(".mp3"):
+                self._temp_mp3 = save_file
+            elif save_file:
                 try:
                     mp3_out = os.path.join(tmp_dir, "final.mp3")
-                    AudioSegment.from_wav(save_file).export(mp3_out,
-                                                            format="mp3", bitrate="192k")
+                    src_seg = (processed_seg if processed_seg is not None
+                               else AudioSegment.from_file(save_file))
+                    src_seg.export(mp3_out, format="mp3", bitrate="192k")
                     self._temp_mp3 = mp3_out
                 except Exception:
                     pass
-            elif save_file and save_file.endswith(".mp3"):
-                self._temp_mp3 = save_file
 
-            # Clean old temp dir
-            old_dir = None
-            if self._temp_playback_file:
-                old_dir = os.path.dirname(self._temp_playback_file)
-            if old_dir and old_dir != tmp_dir:
-                shutil.rmtree(old_dir, ignore_errors=True)
+            # Clean up temp dirs from previous generations
+            for old_dir in list(self._tmp_dirs):
+                if old_dir != tmp_dir:
+                    shutil.rmtree(old_dir, ignore_errors=True)
+                    self._tmp_dirs.discard(old_dir)
 
             self._temp_save_file = save_file
             self._temp_save_ext  = save_ext
-            self.after(0, lambda: self._on_generate_finish(playback_file))
+            progress(1.0)
+            self.after(0, lambda: self._on_generate_finish(playback_file,
+                                                           autoplay=preview))
 
         except Exception as e:
-            self.after(0, lambda err=str(e): self._on_generate_error(err))
+            if self._stop_event.is_set():
+                # A cancel raised inside an engine (e.g. aborted download)
+                self.after(0, self._on_generate_finish, None)
+            else:
+                self.after(0, lambda err=str(e): self._on_generate_error(err))
 
     # ──────────────────────────────────────────────────────────────
     #  PLAYBACK
@@ -659,14 +724,21 @@ class TTSStudioApp(ctk.CTk):
     #  CLEANUP
     # ──────────────────────────────────────────────────────────────
 
+    def _cleanup_tmp_dirs(self):
+        """Delete every temp dir this session created (also runs via atexit)."""
+        for d in list(self._tmp_dirs):
+            shutil.rmtree(d, ignore_errors=True)
+            self._tmp_dirs.discard(d)
+        pf = self._temp_playback_file
+        if pf:
+            shutil.rmtree(os.path.dirname(pf), ignore_errors=True)
+
     def destroy(self):
         try:
             pygame.mixer.quit()
         except Exception:
             pass
-        pf = self._temp_playback_file
-        if pf:
-            shutil.rmtree(os.path.dirname(pf), ignore_errors=True)
+        self._cleanup_tmp_dirs()
         if hasattr(self, '_cust_panel') and hasattr(self._cust_panel, 'cleanup'):
             self._cust_panel.cleanup()
         super().destroy()

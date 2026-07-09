@@ -15,22 +15,113 @@ except ImportError:
 # Always mark as available — we have the ONNX fallback bundled
 _AVAILABLE = True
 
+_ONNX_MODEL_URL  = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
+_ONNX_VOICES_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
+
+
+class DownloadCancelled(Exception):
+    """Raised when the user cancels while model weights are downloading."""
+
+
+def _download_with_progress(url, dest_path, label="file",
+                            status_cb=None, check_cancel=None):
+    """Stream *url* to *dest_path* in chunks with progress + cancellation.
+
+    Downloads into a .part file and atomically renames on success, so a
+    cancelled/failed download never leaves a corrupt weights file behind.
+    """
+    import urllib.request
+    tmp_path = dest_path + ".part"
+    request = urllib.request.Request(url, headers={"User-Agent": "TTS-Studio"})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as resp, \
+                open(tmp_path, "wb") as out:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                if check_cancel and check_cancel():
+                    raise DownloadCancelled(f"Download of {label} cancelled")
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+                done += len(chunk)
+                if status_cb:
+                    if total:
+                        status_cb(f"Downloading {label}… "
+                                  f"{done * 100 // total}% "
+                                  f"({done // (1024 * 1024)} / {total // (1024 * 1024)} MB)")
+                    else:
+                        status_cb(f"Downloading {label}… {done // (1024 * 1024)} MB")
+        os.replace(tmp_path, dest_path)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+def _create_onnx_pipeline(model_path, voices_path, device_str, status_cb=None):
+    """Build a kokoro-onnx pipeline with explicit execution providers.
+
+    kokoro-onnx's default constructor lets onnxruntime silently pick the CPU
+    provider even on CUDA machines; here we probe onnxruntime for CUDA and
+    hand it an explicitly-ordered provider list.
+    """
+    from kokoro_onnx import Kokoro
+
+    providers = ["CPUExecutionProvider"]
+    if device_str == "cuda":
+        try:
+            import onnxruntime as ort
+            if "CUDAExecutionProvider" in ort.get_available_providers():
+                providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+            elif status_cb:
+                status_cb("⚠ CUDA requested but onnxruntime-gpu not installed — using CPU.")
+        except ImportError:
+            pass
+
+    try:
+        import onnxruntime as ort
+        if hasattr(Kokoro, "from_session"):
+            session = ort.InferenceSession(model_path, providers=providers)
+            if status_cb:
+                status_cb(f"Kokoro ONNX running on {session.get_providers()[0]}")
+            return Kokoro.from_session(session, voices_path)
+    except Exception as e:
+        print(f"Explicit ONNX session failed ({e}); using default constructor.")
+
+    # Older kokoro-onnx versions honour the ONNX_PROVIDER env var instead.
+    if providers[0] == "CUDAExecutionProvider":
+        os.environ.setdefault("ONNX_PROVIDER", "CUDAExecutionProvider")
+    return Kokoro(model_path, voices_path)
+
 
 class KokoroEngine(BaseTTSEngine):
     name = "Kokoro-82M (Fast Local AI)"
 
     def __init__(self):
-        self._pipelines = {}   # dict of lang_code -> KPipeline
+        self._pipelines = {}   # (kind, lang_or_device) -> pipeline
         self._shared_model = None
 
     @staticmethod
     def is_available() -> bool:
         return _AVAILABLE
 
-    def _get_pipeline(self, lang_code: str, device_str: str, status_cb=None):
-        """Get or create a pipeline for the specific language."""
-        if lang_code in self._pipelines:
-            return self._pipelines[lang_code]
+    def _get_pipeline(self, lang_code: str, device_str: str,
+                      status_cb=None, check_cancel=None):
+        """Get or create a pipeline for the specific language/device."""
+        # The ONNX pipeline is language-agnostic (lang is passed per call),
+        # so one instance per device serves every language.
+        onnx_key  = ("onnx", device_str)
+        torch_key = ("torch", lang_code)
+        if onnx_key in self._pipelines:
+            self._use_onnx = True
+            return self._pipelines[onnx_key]
+        if torch_key in self._pipelines:
+            self._use_onnx = False
+            return self._pipelines[torch_key]
 
         project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
         model_path = os.path.join(project_root, "kokoro-v1.0.onnx")
@@ -41,19 +132,18 @@ class KokoroEngine(BaseTTSEngine):
             try:
                 if status_cb:
                     status_cb("Loading local Kokoro ONNX pipeline...")
-                from kokoro_onnx import Kokoro
-                
                 if not os.path.exists(voices_path):
-                    import urllib.request
-                    if status_cb:
-                        status_cb("Downloading Kokoro ONNX voices...")
-                    v_url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
-                    urllib.request.urlretrieve(v_url, voices_path)
-                    
-                pipeline = Kokoro(model_path, voices_path)
-                self._pipelines[lang_code] = pipeline
+                    _download_with_progress(
+                        _ONNX_VOICES_URL, voices_path, label="Kokoro voices",
+                        status_cb=status_cb, check_cancel=check_cancel)
+
+                pipeline = _create_onnx_pipeline(
+                    model_path, voices_path, device_str, status_cb)
+                self._pipelines[onnx_key] = pipeline
                 self._use_onnx = True
                 return pipeline
+            except DownloadCancelled:
+                raise
             except Exception as onnx_err:
                 print(f"Failed to load local ONNX pipeline: {onnx_err}. Falling back to PyTorch...")
 
@@ -61,32 +151,30 @@ class KokoroEngine(BaseTTSEngine):
             from kokoro import KPipeline, KModel
             if status_cb:
                 status_cb(f"Loading Kokoro {lang_code} pipeline…")
-            
+
             if self._shared_model is None:
                 self._shared_model = KModel().to(device_str).eval()
-            
+
             pipeline = KPipeline(lang_code=lang_code, model=self._shared_model)
-            self._pipelines[lang_code] = pipeline
+            self._pipelines[torch_key] = pipeline
             self._use_onnx = False
             return pipeline
         except Exception as e:
             # Fall back to kokoro-onnx (v1.0)
             print(f"Kokoro PyTorch load failed, using ONNX fallback: {e}")
-            from kokoro_onnx import Kokoro
-            
-            if not os.path.exists(model_path) or not os.path.exists(voices_path):
-                import urllib.request
-                if status_cb:
-                    status_cb("Downloading Kokoro ONNX model…")
-                m_url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx"
-                v_url = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin"
-                if not os.path.exists(model_path):
-                    urllib.request.urlretrieve(m_url, model_path)
-                if not os.path.exists(voices_path):
-                    urllib.request.urlretrieve(v_url, voices_path)
 
-            pipeline = Kokoro(model_path, voices_path)
-            self._pipelines[lang_code] = pipeline
+            if not os.path.exists(model_path):
+                _download_with_progress(
+                    _ONNX_MODEL_URL, model_path, label="Kokoro ONNX model",
+                    status_cb=status_cb, check_cancel=check_cancel)
+            if not os.path.exists(voices_path):
+                _download_with_progress(
+                    _ONNX_VOICES_URL, voices_path, label="Kokoro voices",
+                    status_cb=status_cb, check_cancel=check_cancel)
+
+            pipeline = _create_onnx_pipeline(
+                model_path, voices_path, device_str, status_cb)
+            self._pipelines[onnx_key] = pipeline
             self._use_onnx = True
             return pipeline
 
@@ -139,7 +227,7 @@ class KokoroEngine(BaseTTSEngine):
                 if status_cb: status_cb(f"⚠ SRT failed: {e}. Falling back...")
 
 
-        pipeline = self._get_pipeline(lang_code, device_str, status_cb)
+        pipeline = self._get_pipeline(lang_code, device_str, status_cb, check_cancel)
 
         if status_cb:
             status_cb(f"Generating Kokoro speech ({lang_code})...")
