@@ -12,6 +12,7 @@ Welcome to the **VoiceCraft** codebase guide. This document serves as a technica
 5. [How to Add a New Voice Effect](#-how-to-add-a-new-voice-effect)
 6. [Audio Customization Deep-Dive](#-audio-customization-deep-dive)
 7. [Building & Running the App](#-building--running-the-app)
+8. [Model Weights & Troubleshooting](#-model-weights--troubleshooting)
 
 ---
 
@@ -35,17 +36,20 @@ Below is the directory structure mapping each component of the VoiceCraft applic
 | :--- | :--- | :--- |
 | `tts_app.py` | Entry Point Script | The main application entry point. Initializes the CustomTkinter runtime and starts `VoiceCraftApp`. |
 | `run.ps1` | Shell Script | PowerShell launcher that automatically checks for and triggers the application via the local virtual environment (`venv_311`). |
-| `requirements.txt` | Package Dependencies | Lists necessary libraries for GUI, audio playback, sound manipulation, and mathematical utilities. |
-| `build_exe.py` | Packaging Script | PyInstaller compilation script configured to bundle dependencies (PyTorch, ONNX Runtime, CustomTkinter) into a portable executable. |
+| `requirements.txt` | Package Dependencies | Dependencies grouped per engine, plus GUI, playback and DSP libraries. Ends with a note on why `kokoro-onnx` must be installed separately with `--no-deps`. |
+| `build_exe.py` | Packaging Script | PyInstaller compilation script that bundles dependencies (PyTorch, ONNX Runtime, CustomTkinter) into a portable executable. Refuses to run from an interpreter that cannot import every engine library, and refuses to bundle truncated Kokoro weights. Outputs `dist/TTS_Studio/TTS_Studio.exe`. |
+| `installer.iss` | Inno Setup Script | Packages the `dist/TTS_Studio/` PyInstaller output into a distributable Windows installer (`VoiceCraft-Setup-<version>.exe`) with Start Menu shortcuts, optional desktop icon, and an uninstaller. |
 | **`core/`** | Directory | Shared module containing core configuration parameters and system utilities. |
 | `├── constants.py` | Configuration Module | Holds application-wide design tokens (colors, font configurations) and static lists of languages/voices. |
+| `├── model_cache.py` | Model Cache | Thread-safe, idle-expiring cache (`MODEL_CACHE`) for heavy TTS/ASR models. Reuses loaded instances between generations and evicts them after 5 minutes idle, returning CUDA memory to the OS. |
+| `├── temp_cleanup.py` | Housekeeping | Sweeps orphaned `tts_studio_*` temp directories left behind by a crash or force-quit. Called on startup. |
 | `└── subtitles.py` | Transcription Module | Word-level subtitle generation wrapper using `faster-whisper`. Manages dynamic GPU/CPU loading and VRAM unloading. |
 | **`engines/`** | Directory | Contains abstract interfaces and concrete adapters for various TTS engines. |
 | `├── base.py` | Class Interface | Declares `BaseTTSEngine`, the abstract base class that all TTS adapters must inherit and implement. |
 | `├── registry.py` | Engine Registry | Central registration file (`ENGINE_CLASSES`). Determines which engines are activated and in what order they appear in the UI. |
 | `├── gtts_engine.py` | TTS Engine Adapter | Google Translate TTS API wrapper (requires internet connection). Outputs `.mp3`. |
 | `├── edge_engine.py` | TTS Engine Adapter | Microsoft Edge Neural Voices API wrapper (requires internet connection). Outputs `.mp3`. |
-| `├── kokoro_engine.py` | TTS Engine Adapter | Kokoro-82M adapter. Prioritizes local `kokoro-v1.0.onnx` offline weights to prevent Hugging Face network freezes on startup. |
+| `├── kokoro_engine.py` | TTS Engine Adapter | Kokoro-82M adapter with two backends. Prefers local `kokoro-v1.0.onnx` weights to avoid Hugging Face network freezes on startup, and falls back to the PyTorch `KPipeline`. Verifies the weights are complete before loading them. |
 | `├── piper_engine.py` | TTS Engine Adapter | Local, offline fast speech engine adapter utilizing `.onnx` voices. |
 | `├── melo_engine.py` | TTS Engine Adapter | MeloTTS multi-lingual offline neural engine adapter. |
 | `└── pyttsx3_engine.py` | TTS Engine Adapter | Local offline adapter using standard OS speech engines (SAPI5 on Windows). |
@@ -293,12 +297,16 @@ Here is how each step operates:
 ### Running Locally
 To launch the application from source code:
 1. Ensure Python 3.11 is installed.
-2. Initialize and activate your virtual environment:
+2. Initialize your virtual environment:
    ```powershell
    python -m venv venv_311
-   .\venv_311\Scripts\activate
-   pip install -r requirements.txt
+   .\venv_311\Scripts\python.exe -m pip install -r requirements.txt
+   .\venv_311\Scripts\python.exe -m pip install --no-deps kokoro-onnx
    ```
+   > **Always call the venv interpreter by path.** On this machine bare `python`
+   > is 3.13 and `venv_311\Scripts\pip.exe` still points at the venv this one was
+   > copied from, so `pip install ...` lands in the wrong environment and the
+   > package appears missing to the running app.
 3. Run the powershell script to boot the application:
    ```powershell
    .\run.ps1
@@ -306,9 +314,113 @@ To launch the application from source code:
 
 ### Compiling to Portable EXE
 You can package VoiceCraft into a standalone Windows directory:
-1. Run [build_exe.py](file:///e:/Develop/Antigravity_testing/tts_app%20modular/build_exe.py):
+1. Run [build_exe.py](file:///e:/Develop/Antigravity_testing/tts_app%20modular/build_exe.py) **with the venv interpreter**:
    ```powershell
-   python build_exe.py
+   .\venv_311\Scripts\python.exe build_exe.py
    ```
+   PyInstaller bundles whatever the *running* interpreter can import, so a bare
+   `python build_exe.py` silently produces an EXE without Kokoro, Piper, MeloTTS
+   or subtitles. `_check_interpreter()` now aborts the build and names the
+   missing packages rather than shipping a partial bundle.
 2. The compilation system runs PyInstaller with instructions to gather dependencies like PyTorch, ONNX, and CustomTkinter automatically, and bundles local files (like the `models/` folder, `kokoro-v1.0.onnx`, and `voices.bin` if present) using PyInstaller's `--add-data` configuration so the app runs fully self-contained.
-3. Once completed, the distribution is saved in the `./dist/VoiceCraft/` folder. Run `VoiceCraft.exe` to launch the portable app.
+3. Once completed, the distribution is saved in the `./dist/TTS_Studio/` folder (~6.0 GB, dominated by PyTorch). Run `TTS_Studio.exe` to launch the portable app.
+
+### Building a Windows Installer (Setup.exe)
+For end users, a proper installer is preferable to distributing the raw portable folder. [installer.iss](file:///e:/Develop/Antigravity_testing/tts_app%20modular/installer.iss) is an [Inno Setup](https://jrsoftware.org/isinfo.php) script that wraps the PyInstaller output into a signed-ready `Setup.exe`.
+
+1. Install Inno Setup 6 (one-time): `winget install JRSoftware.InnoSetup`.
+2. Build the portable app first (`.env_311\Scripts\python.exe build_exe.py`) — the installer script packages whatever is currently in `dist/TTS_Studio/`.
+3. Compile the installer:
+   ```powershell
+   & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+   ```
+4. The resulting installer is written to `installer_output/VoiceCraft-Setup-<version>.exe` (gitignored, same as `dist/` and `build/`).
+
+The installer:
+* Installs to `%LocalAppData%\Programs\VoiceCraft` by default and does **not** require admin rights (`PrivilegesRequired=lowest`).
+* Adds Start Menu shortcuts and a standard uninstaller entry under "Apps & Features".
+* Offers an optional desktop icon (unchecked by default) and can launch the app immediately after install.
+* Bump `MyAppVersion` at the top of `installer.iss` before cutting a new release.
+* No custom app icon is currently bundled — `installer.iss` falls back to Inno Setup's default icon for shortcuts. Add an `.ico` file and reference it via `SetupIconFile` / `IconFilename` to brand it.
+
+---
+
+## 🩺 Model Weights & Troubleshooting
+
+### Which engines appear in the dropdown
+
+The engine list is **not** hardcoded. `get_available_engines()` in
+[registry.py](file:///e:/Develop/Antigravity_testing/tts_app%20modular/engines/registry.py)
+filters `ENGINE_CLASSES` by each class's `is_available()`, and
+`EnginePanel` renders whatever survives. Most adapters set `_AVAILABLE` from a
+bare `try: import ...` at module scope, so **a missing library silently removes
+its engine from the UI** with no error anywhere.
+
+If the dropdown is short, check the adapter's import rather than the UI:
+
+```powershell
+.\venv_311\Scripts\python.exe -c "from engines.registry import ENGINE_CLASSES; [print(c.is_available(), c.name) for c in ENGINE_CLASSES]"
+```
+
+`KokoroEngine` is the exception: it forces `_AVAILABLE = True` because it can
+fall back between two backends, so it always appears and reports problems at
+synthesis time instead.
+
+### Kokoro has two backends
+
+| Backend | Weights | Notes |
+| :--- | :--- | :--- |
+| ONNX (preferred) | `kokoro-v1.0.onnx` + `voices.bin` in the project root | Needs `kokoro-onnx`. Avoids a Hugging Face round trip on startup. |
+| PyTorch (fallback) | `hexgrad/Kokoro-82M` via the HF cache | Needs `kokoro` + `misaki`. Slower to load. |
+
+`_get_pipeline()` tries ONNX, then PyTorch, then ONNX once more. If everything
+fails it raises a single error quoting **both** causes. Do not let the final
+ONNX attempt raise on its own: it hides why PyTorch failed first, which is
+exactly the trap that made a truncated model look like a PyTorch bug.
+
+### Weight files
+
+Both are gitignored (`*.onnx`, `voices.bin`) and are never committed:
+
+| File | Exact size | Source |
+| :--- | ---: | :--- |
+| `kokoro-v1.0.onnx` | 325,532,387 bytes | `thewh1teagle/kokoro-onnx` release `model-files-v1.0` |
+| `voices.bin` | 28,214,398 bytes | same release, `voices-v1.0.bin` |
+
+A **truncated** download is the dangerous case. It keeps a valid ONNX header, so
+`os.path.exists()` is satisfied and PyInstaller bundles it happily, but
+onnxruntime fails at load with the unhelpful
+`INVALID_PROTOBUF : Protobuf parsing failed`. Two guards now prevent this:
+
+* `_download_with_progress()` compares bytes received against `Content-Length`
+  and refuses to promote a short `.part` file.
+* `_onnx_is_complete()` reads the length the file's own protobuf header declares
+  for its `graph` field and compares it to the file size, for the cost of 64
+  bytes. `_get_pipeline()` deletes weights that fail this and re-downloads;
+  `build_exe.py` aborts rather than bundling them.
+
+To check a file by hand:
+
+```powershell
+.\venv_311\Scripts\python.exe -c "from engines.kokoro_engine import _onnx_is_complete; print(_onnx_is_complete('kokoro-v1.0.onnx'))"
+```
+
+### Environment traps on this machine
+
+* Bare `python` is **3.13**, not the project's 3.11 venv.
+* `venv_311\Scripts\pip.exe` still resolves to the venv this one was copied
+  from, so it installs into a different environment. Use
+  `.\venv_311\Scripts\python.exe -m pip` instead, and trust
+  `importlib.metadata` over `pip list` when they disagree.
+* `kokoro-onnx` depends on `phonemizer>=3.4.0`, which installs over the
+  `phonemizer-fork` that `kokoro` and `misaki` need, since both ship the same
+  `phonemizer` module. Install it last with `--no-deps`.
+
+To audit a finished build, the PyInstaller TOC records absolute source paths:
+
+```powershell
+Select-String -Path build\TTS_Studio\COLLECT-00.toc -Pattern "site-packages" | Select-Object -First 3
+```
+
+If those point anywhere other than `venv_311`, the EXE was built by the wrong
+interpreter and will be missing engines.

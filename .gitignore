@@ -24,6 +24,9 @@ dist/
 *.spec
 *.manifest
 
+# Windows installer (Inno Setup)
+installer_output/
+
 # Model download caches, weights, and configurations
 .cache/
 models/

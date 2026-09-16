@@ -53,6 +53,11 @@ def _download_with_progress(url, dest_path, label="file",
                                   f"({done // (1024 * 1024)} / {total // (1024 * 1024)} MB)")
                     else:
                         status_cb(f"Downloading {label}… {done // (1024 * 1024)} MB")
+            if total and done != total:
+                raise IOError(
+                    f"{label} download truncated: got {done} of {total} bytes. "
+                    "The partial file was discarded — please retry."
+                )
         os.replace(tmp_path, dest_path)
     finally:
         if os.path.exists(tmp_path):
@@ -60,6 +65,47 @@ def _download_with_progress(url, dest_path, label="file",
                 os.remove(tmp_path)
             except OSError:
                 pass
+
+
+def _onnx_is_complete(path):
+    """Return True if *path* is at least as long as its own header declares.
+
+    A half-finished download still has a valid ONNX header, so os.path.exists
+    says nothing useful; onnxruntime only notices at load time and reports the
+    unhelpful "INVALID_PROTOBUF: Protobuf parsing failed". The top-level graph
+    field carries its own byte length, so comparing that against the file size
+    catches the truncation for the cost of reading 64 bytes.
+    """
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as fh:
+            head = fh.read(64)
+    except OSError:
+        return False
+
+    i = 0
+    while i < len(head):
+        field, wire = head[i] >> 3, head[i] & 7
+        i += 1
+        if wire == 0:                      # varint, skip it
+            while i < len(head) and head[i] & 0x80:
+                i += 1
+            i += 1
+        elif wire == 2:                    # length-delimited
+            length, shift = 0, 0
+            while i < len(head):
+                byte = head[i]
+                i += 1
+                length |= (byte & 0x7F) << shift
+                if not byte & 0x80:
+                    break
+                shift += 7
+            if field == 7:                 # GraphProto — the bulk of the model
+                return size >= i + length
+            i += length
+        else:
+            return True                    # unfamiliar layout; let onnxruntime judge
+    return True
 
 
 def _create_onnx_pipeline(model_path, voices_path, device_str, status_cb=None):
@@ -127,6 +173,14 @@ class KokoroEngine(BaseTTSEngine):
         model_path = os.path.join(project_root, "kokoro-v1.0.onnx")
         voices_path = os.path.join(project_root, "voices.bin")
 
+        # Weights that exist but are truncated are worse than absent: they pass
+        # every exists() gate below and then fail deep inside onnxruntime.
+        if os.path.exists(model_path) and not _onnx_is_complete(model_path):
+            print(f"Discarding truncated Kokoro ONNX weights at {model_path}")
+            if status_cb:
+                status_cb("⚠ Kokoro ONNX weights incomplete — re-downloading.")
+            os.remove(model_path)
+
         # Prefer local ONNX pipeline if weights exist to avoid Hugging Face network freezes
         if os.path.exists(model_path):
             try:
@@ -159,21 +213,33 @@ class KokoroEngine(BaseTTSEngine):
             self._pipelines[torch_key] = pipeline
             self._use_onnx = False
             return pipeline
-        except Exception as e:
+        except Exception as torch_err:
             # Fall back to kokoro-onnx (v1.0)
-            print(f"Kokoro PyTorch load failed, using ONNX fallback: {e}")
+            print(f"Kokoro PyTorch load failed, using ONNX fallback: {torch_err}")
 
-            if not os.path.exists(model_path):
-                _download_with_progress(
-                    _ONNX_MODEL_URL, model_path, label="Kokoro ONNX model",
-                    status_cb=status_cb, check_cancel=check_cancel)
-            if not os.path.exists(voices_path):
-                _download_with_progress(
-                    _ONNX_VOICES_URL, voices_path, label="Kokoro voices",
-                    status_cb=status_cb, check_cancel=check_cancel)
+            try:
+                if not os.path.exists(model_path):
+                    _download_with_progress(
+                        _ONNX_MODEL_URL, model_path, label="Kokoro ONNX model",
+                        status_cb=status_cb, check_cancel=check_cancel)
+                if not os.path.exists(voices_path):
+                    _download_with_progress(
+                        _ONNX_VOICES_URL, voices_path, label="Kokoro voices",
+                        status_cb=status_cb, check_cancel=check_cancel)
 
-            pipeline = _create_onnx_pipeline(
-                model_path, voices_path, device_str, status_cb)
+                pipeline = _create_onnx_pipeline(
+                    model_path, voices_path, device_str, status_cb)
+            except DownloadCancelled:
+                raise
+            except Exception as onnx_err:
+                # Both paths are gone. Report both causes, otherwise the dialog
+                # shows only the ONNX error and hides why PyTorch failed first.
+                raise RuntimeError(
+                    f"Kokoro could not start.\n\n"
+                    f"PyTorch path: {torch_err}\n\n"
+                    f"ONNX fallback: {onnx_err}"
+                ) from onnx_err
+
             self._pipelines[onnx_key] = pipeline
             self._use_onnx = True
             return pipeline

@@ -296,16 +296,13 @@ class EnginePanel:
         for f in self._sub_frames.values():
             f.pack_forget()
 
+        # One entry per registered engine, keyed by a word from its display name.
         key_map = {
             "gTTS":    "gtts",
             "Edge":    "edge",
-            "gTTS":    "gtts",
-            "Edge":    "edge",
             "Kokoro":  "kokoro",
-            "Bark":    "bark",
             "Piper":   "piper",
             "Melo":    "melo",
-            "StyleTTS 2": "styletts2",
             "pyttsx3": "pyttsx3",
         }
         for keyword, key in key_map.items():

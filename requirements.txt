@@ -1,7 +1,47 @@
+# VoiceCraft dependencies
+# Install order matters for Kokoro; see the note at the bottom.
+
+# ── GUI, playback, DSP ──────────────────────────────────────────
 customtkinter>=5.2.0
-gTTS>=2.3.0
-pyttsx3>=2.90
 pygame>=2.5.0
 pydub>=0.25.1
 numpy>=1.24.0
 Pillow>=10.0.0
+librosa>=0.9.1
+soundfile>=0.12.0
+
+# ── Engine 1: gTTS (Google Translate) ───────────────────────────
+gTTS>=2.3.0
+
+# ── Engine 2: Edge TTS (Neural Voices) ──────────────────────────
+edge-tts>=7.0.0
+
+# ── Engine 3: Kokoro-82M ────────────────────────────────────────
+# PyTorch path (primary) and ONNX path (faster, used when weights exist).
+torch>=2.5.0
+kokoro>=0.9.4
+misaki>=0.9.4
+phonemizer-fork>=3.3.2
+onnxruntime>=1.20.1
+Simpler-Kokoro>=1.3.0
+
+# ── Engine 4: Piper TTS (Local Fast) ────────────────────────────
+piper-tts>=1.4.0
+
+# ── Engine 5: MeloTTS (Multi-Lingual) ───────────────────────────
+melotts>=0.1.2
+nltk>=3.9.0
+
+# ── Engine 6: pyttsx3 (System Voices) ───────────────────────────
+pyttsx3>=2.90
+
+# ── Word-level subtitles ────────────────────────────────────────
+faster-whisper>=1.0.0
+
+# ── Install note ────────────────────────────────────────────────
+# kokoro-onnx is deliberately absent above. It requires phonemizer>=3.4.0,
+# which installs over the phonemizer-fork that kokoro and misaki depend on,
+# since both ship the same `phonemizer` module. Install it last and without
+# dependencies, which are already satisfied by the packages listed here:
+#
+#     pip install --no-deps kokoro-onnx
