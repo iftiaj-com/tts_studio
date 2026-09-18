@@ -120,7 +120,7 @@ EFFECTS_REGISTRY = [
     {
         "key":    "dramatic_ads",
         "label":  "📢  Dramatic Ads",
-        "desc":   "Punchy & urgent commercial style",
+        "desc":   "Authoritative & punchy commercial broadcast voice (SM7B exciter)",
         "fn":     AudioEffects.dramatic_ads,
     },
     {

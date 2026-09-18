@@ -736,30 +736,73 @@ class AudioEffects:
 
     @staticmethod
     def dramatic_ads(samples, sr):
-        """Dramatic Ads — deep, authoritative movie-trailer / commercial voice."""
-        samples = AudioEffects.change_speed(samples, 0.92)
-        samples = AudioEffects.pitch_shift(samples, sr, semitones=-2.5)
+        """
+        Dramatic Ads — authoritative, punchy commercial voice with high broadcast sizzle.
+        Acoustically modeled after 'Blink voice ad.mp3':
+          • 100% natural, anti-robotic neural audio preservation (zero phase vocoders)
+          • Deep commercial announcer chest fundamental at 100 Hz (+2.8 dB) matching ~99 Hz core
+          • Thick vocal body & proximity at 200 Hz (+2.0 dB)
+          • Clean separation scoop at 480 Hz (-2.0 dB) eliminating boxy room mud
+          • Punchy dialogue projection at 2800 Hz (+2.0 dB)
+          • High commercial sizzle exciter shelf above 5500 Hz (+2.5 dB)
+          • Punchy broadcast compressor and transparent limiter normalized to -0.85 dBFS (0.907).
+        """
         n = len(samples)
         fft_signal = np.fft.rfft(samples)
         freqs = np.fft.rfftfreq(n, 1.0 / sr)
-        
-        # High pass at 60 Hz
-        fft_signal[freqs < 60] *= 0.0
-        # Boost chest resonance low-mids (90 - 160 Hz)
-        fft_signal[(freqs >= 90) & (freqs <= 160)] *= 1.95
-        # Scoop boxy mids
-        fft_signal[(freqs >= 400) & (freqs <= 800)] *= 0.8
-        # Boost commercial sizzle (4.5k - 9k Hz)
-        fft_signal[(freqs >= 4500) & (freqs <= 9000)] *= 1.65
+
+        gain_db = np.zeros_like(freqs)
+
+        # 1. Gentle sub-bass cut below 60 Hz (preserves full male fundamental down to 80 Hz)
+        hp_mask = freqs < 60.0
+        if np.any(hp_mask):
+            rolloff = np.clip((freqs[hp_mask] - 20.0) / 40.0, 0.0, 1.0)
+            gain_db[hp_mask] += (1.0 - np.sin(rolloff * np.pi / 2.0)) * -22.0
+
+        # 2. Commercial Announcer Fundamental at 100 Hz (+2.8 dB, width 30 Hz)
+        gain_db += 2.8 * np.exp(-0.5 * ((freqs - 100.0) / 30.0) ** 2)
+
+        # 3. Thick Vocal Body & Proximity at 200 Hz (+2.0 dB, width 60 Hz)
+        gain_db += 2.0 * np.exp(-0.5 * ((freqs - 200.0) / 60.0) ** 2)
+
+        # 4. Clean Separation Scoop at 480 Hz (-2.0 dB, width 110 Hz)
+        gain_db -= 2.0 * np.exp(-0.5 * ((freqs - 480.0) / 110.0) ** 2)
+
+        # 5. Punchy Dialogue Projection at 2800 Hz (+2.0 dB, width 700 Hz)
+        gain_db += 2.0 * np.exp(-0.5 * ((freqs - 2800.0) / 700.0) ** 2)
+
+        # 6. Commercial Sizzle Exciter Shelf above 5500 Hz (+2.5 dB)
+        shelf_mask = freqs > 5500.0
+        if np.any(shelf_mask):
+            shelf_t = np.clip((freqs[shelf_mask] - 5500.0) / 3500.0, 0.0, 1.0)
+            gain_db[shelf_mask] += 2.5 * (0.5 - 0.5 * np.cos(shelf_t * np.pi))
+
+        # Apply smooth linear gain curve
+        fft_signal *= 10.0 ** (gain_db / 20.0)
         samples = np.fft.irfft(fft_signal, n)
-        
-        # Heavy brickwall compression
-        threshold, ratio = 0.12, 0.32
+
+        # 7. Punchy Commercial Broadcast Compressor
+        threshold = 0.24
+        ratio = 0.45
         abs_s = np.abs(samples)
-        compressed = np.where(abs_s > threshold,
-                              threshold + (abs_s - threshold) * ratio, abs_s)
-        samples = np.sign(samples) * compressed * 1.65
-        return np.tanh(samples * 0.95).astype(np.float32)
+        mask = abs_s > threshold
+        compressed = np.copy(abs_s)
+        compressed[mask] = threshold + (abs_s[mask] - threshold) * ratio
+        samples = np.sign(samples) * compressed * 1.28
+
+        # Stage B: Transparent soft-knee limiter for peaks above 0.75
+        abs_s = np.abs(samples)
+        over = abs_s > 0.75
+        if np.any(over):
+            soft_x = 0.75 + 0.18 * np.tanh((abs_s[over] - 0.75) / 0.18)
+            samples[over] = np.sign(samples[over]) * soft_x
+
+        # Stage C: Peak normalization to -0.85 dBFS (0.907)
+        peak = np.max(np.abs(samples))
+        if peak > 0:
+            samples = (samples / peak) * 0.907
+
+        return samples.astype(np.float32)
 
     @staticmethod
     def techy(samples, sr):
