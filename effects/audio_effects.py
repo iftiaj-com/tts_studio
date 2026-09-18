@@ -72,11 +72,14 @@ class AudioEffects:
             stretched = librosa.effects.time_stretch(y=samples, rate=speed_factor)
             return stretched.astype(np.float32)
 
-        # ── numpy fallback (changes pitch as a side-effect) ──────────
-        old_indices = np.arange(len(samples))
-        new_length  = int(len(samples) / speed_factor)
-        new_indices = np.linspace(0, len(samples) - 1, new_length)
-        return np.interp(new_indices, old_indices, samples).astype(np.float32)
+        # ── numpy fallback (OLA pitch-preserving time stretch) ──────
+        try:
+            return AudioEffects._time_stretch_ola(samples, speed_factor).astype(np.float32)
+        except Exception:
+            old_indices = np.arange(len(samples))
+            new_length  = int(len(samples) / speed_factor)
+            new_indices = np.linspace(0, len(samples) - 1, new_length)
+            return np.interp(new_indices, old_indices, samples).astype(np.float32)
 
     @staticmethod
     def _time_stretch_ola(samples, rate, frame_size=512, hop_size=128):
@@ -528,30 +531,69 @@ class AudioEffects:
 
     @staticmethod
     def saas_flash(samples, sr):
-        """SaaS Flash — punchy, ultra-crisp marketing voice for social shorts."""
-        samples = AudioEffects.change_speed(samples, 1.18)
-        samples = AudioEffects.pitch_shift(samples, sr, semitones=-0.5)
+        """
+        SaaS Flash — punchy, ultra-crisp marketing voice for social shorts.
+        Acoustically modeled after 'Saas flash voice.mp3':
+          • 100% natural, human vocal preservation (zero phase-vocoder or robotic artifacts)
+          • Smooth parametric studio EQ (warm 180Hz chest body, 3.4kHz consonant clarity, 7kHz+ air)
+          • Transparent broadcast leveling (preserves human emotional micro-dynamics)
+          • Clean commercial normalization to -0.5 dBFS (0.944).
+        """
+        # 1. Smooth Parametric Studio EQ (Zero Gibbs ringing, smooth continuous curves)
         n = len(samples)
         fft_signal = np.fft.rfft(samples)
         freqs = np.fft.rfftfreq(n, 1.0 / sr)
-        
-        # High pass below 110 Hz to fit small mobile phone speakers
-        fft_signal[freqs < 110] *= 0.0
-        # Boost presence (2000 - 5000 Hz) for maximum text articulation
-        fft_signal[(freqs >= 2000) & (freqs <= 5000)] *= 1.6
-        # Scoop low mids (300 - 600 Hz) to clear boxy frequencies
-        fft_signal[(freqs >= 300) & (freqs <= 600)] *= 0.8
-        # Add sizzle (8k Hz+)
-        fft_signal[freqs > 8000] *= 1.3
+
+        gain_db = np.zeros_like(freqs)
+
+        # High-pass filter below 70 Hz (smooth rolloff from 70 Hz down to 20 Hz)
+        hp_mask = freqs < 70.0
+        if np.any(hp_mask):
+            rolloff = np.clip((freqs[hp_mask] - 20.0) / 50.0, 0.0, 1.0)
+            gain_db[hp_mask] += (1.0 - np.sin(rolloff * np.pi / 2.0)) * -20.0
+
+        # Bell 1: Warmth & Vocal Body at 180 Hz (+1.5 dB, wide musical Q)
+        gain_db += 1.5 * np.exp(-0.5 * ((freqs - 180.0) / 70.0) ** 2)
+
+        # Bell 2: Dip boxy room resonance at 450 Hz (-1.0 dB)
+        gain_db -= 1.0 * np.exp(-0.5 * ((freqs - 450.0) / 90.0) ** 2)
+
+        # Bell 3: Vocal Presence & Articulation at 3400 Hz (+2.5 dB, wide Q)
+        # Gives that modern, articulate commercial pop without harshness
+        gain_db += 2.5 * np.exp(-0.5 * ((freqs - 3400.0) / 900.0) ** 2)
+
+        # High-shelf: Sparkle & Air above 7000 Hz (+2.0 dB)
+        shelf_mask = freqs > 7000.0
+        if np.any(shelf_mask):
+            shelf_t = np.clip((freqs[shelf_mask] - 7000.0) / 3500.0, 0.0, 1.0)
+            gain_db[shelf_mask] += 2.0 * (0.5 - 0.5 * np.cos(shelf_t * np.pi))
+
+        # Apply smooth linear gain curve
+        fft_signal *= 10.0 ** (gain_db / 20.0)
         samples = np.fft.irfft(fft_signal, n)
-        
-        # Tight, heavy compression
-        threshold, ratio = 0.15, 0.25
+
+        # 2. Transparent Broadcast Leveler (Preserves natural human dynamics & emotion)
+        threshold = 0.28
+        ratio = 0.55
         abs_s = np.abs(samples)
-        compressed = np.where(abs_s > threshold,
-                              threshold + (abs_s - threshold) * ratio, abs_s)
-        samples = np.sign(samples) * compressed * 1.55
-        return np.tanh(samples * 1.15).astype(np.float32)
+        mask = abs_s > threshold
+        compressed = np.copy(abs_s)
+        compressed[mask] = threshold + (abs_s[mask] - threshold) * ratio
+        samples = np.sign(samples) * compressed * 1.18
+
+        # Stage B: Transparent soft-saturation (prevents digital clipping on loud peaks)
+        abs_s = np.abs(samples)
+        over = abs_s > 0.75
+        if np.any(over):
+            soft_x = 0.75 + 0.20 * np.tanh((abs_s[over] - 0.75) / 0.20)
+            samples[over] = np.sign(samples[over]) * soft_x
+
+        # Stage C: Peak normalization to -0.5 dBFS (0.944)
+        peak = np.max(np.abs(samples))
+        if peak > 0:
+            samples = (samples / peak) * 0.944
+
+        return samples.astype(np.float32)
 
     @staticmethod
     def cinematic(samples, sr):

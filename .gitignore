@@ -56,3 +56,9 @@ desktop.ini
 
 # Kokoro ONNX voice pack (auto-downloaded by engines/kokoro_engine.py)
 voices.bin
+
+# Local test files, scratch scripts, and training audio
+scratch/
+Voices-training/
+test_*.py
+test_*.wav

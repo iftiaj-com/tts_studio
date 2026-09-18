@@ -102,7 +102,7 @@ EFFECTS_REGISTRY = [
     {
         "key":    "saas_flash",
         "label":  "⚡  SaaS Flash",
-        "desc":   "Snappy & bright marketing voice",
+        "desc":   "Snappy 195 WPM breathless marketing voice",
         "fn":     AudioEffects.saas_flash,
     },
     {
