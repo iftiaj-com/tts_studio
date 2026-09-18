@@ -603,12 +603,82 @@ class AudioEffects:
         return samples.astype(np.float32)
 
     @staticmethod
+    def seductive_female(samples, sr):
+        """
+        Seductive (F) — intimate, warm, breathy sensual female voice with close-mic intimacy.
+        Acoustically modeled after 'Seductive-female.mp3':
+          • 100% natural, anti-robotic neural audio preservation (zero phase vocoders)
+          • Sub-bass cutoff below 75 Hz (removes rumble, preserves 140Hz+ female fundamental)
+          • Sultry Alto/Mezzo fundamental warmth at 195 Hz (+2.8 dB, width 38 Hz)
+          • Intimate proximity body at 320 Hz (+1.8 dB, width 60 Hz)
+          • Acoustic mud & nasal scoop at 800 Hz (-2.8 dB, width 180 Hz)
+          • Breathy whisper & lip diction presence bell at 4800 Hz (+2.5 dB, width 900 Hz)
+          • Silky breath air sheen above 8000 Hz (+2.0 dB)
+          • Smooth broadcast dialogue leveler and soft limiter normalized to -1.0 dBFS (0.891).
+        """
+        n = len(samples)
+        fft_signal = np.fft.rfft(samples)
+        freqs = np.fft.rfftfreq(n, 1.0 / sr)
+
+        gain_db = np.zeros_like(freqs)
+
+        # 1. High-pass filter below 75 Hz (smooth cosine rolloff down to 25 Hz)
+        hp_mask = freqs < 75.0
+        if np.any(hp_mask):
+            rolloff = np.clip((freqs[hp_mask] - 25.0) / 50.0, 0.0, 1.0)
+            gain_db[hp_mask] += (1.0 - np.sin(rolloff * np.pi / 2.0)) * -24.0
+
+        # 2. Sensual Alto / Mezzo Fundamental Bell at 195 Hz (+2.8 dB, width 38 Hz)
+        gain_db += 2.8 * np.exp(-0.5 * ((freqs - 195.0) / 38.0) ** 2)
+
+        # 3. Intimate Proximity Body at 320 Hz (+1.8 dB, width 60 Hz)
+        gain_db += 1.8 * np.exp(-0.5 * ((freqs - 320.0) / 60.0) ** 2)
+
+        # 4. Acoustic Mud & Nasal Scoop at 800 Hz (-2.8 dB, width 180 Hz)
+        gain_db -= 2.8 * np.exp(-0.5 * ((freqs - 800.0) / 180.0) ** 2)
+
+        # 5. Breathy Whisper & Lip Diction Bell at 4800 Hz (+2.5 dB, width 900 Hz)
+        gain_db += 2.5 * np.exp(-0.5 * ((freqs - 4800.0) / 900.0) ** 2)
+
+        # 6. Silky Breath Air Sheen Shelf above 8000 Hz (+2.0 dB)
+        shelf_mask = freqs > 8000.0
+        if np.any(shelf_mask):
+            shelf_t = np.clip((freqs[shelf_mask] - 8000.0) / 4000.0, 0.0, 1.0)
+            gain_db[shelf_mask] += 2.0 * (0.5 - 0.5 * np.cos(shelf_t * np.pi))
+
+        # Apply smooth linear gain curve
+        fft_signal *= 10.0 ** (gain_db / 20.0)
+        samples = np.fft.irfft(fft_signal, n)
+
+        # 7. Transparent Broadcast Dialogue Leveler (Preserves intimate breathing and delicate micro-dynamics)
+        threshold = 0.25
+        ratio = 0.48
+        abs_s = np.abs(samples)
+        mask = abs_s > threshold
+        compressed = np.copy(abs_s)
+        compressed[mask] = threshold + (abs_s[mask] - threshold) * ratio
+        samples = np.sign(samples) * compressed * 1.22
+
+        # Stage B: Transparent soft-knee limiter for peaks above 0.75
+        abs_s = np.abs(samples)
+        over = abs_s > 0.75
+        if np.any(over):
+            soft_x = 0.75 + 0.18 * np.tanh((abs_s[over] - 0.75) / 0.18)
+            samples[over] = np.sign(samples[over]) * soft_x
+
+        # Stage C: Peak normalization to -1.0 dBFS (0.891)
+        peak = np.max(np.abs(samples))
+        if peak > 0:
+            samples = (samples / peak) * 0.891
+
+        return samples.astype(np.float32)
+
+    @staticmethod
     def seductive(samples, sr, gender="male"):
         """Sensual tone routing to gender-specific acoustic profiles."""
         if gender == "male":
             return AudioEffects.seductive_male(samples, sr)
-        # Default fallback for female
-        return AudioEffects.cinematic(samples, sr)
+        return AudioEffects.seductive_female(samples, sr)
 
     @staticmethod
     def saas_flash(samples, sr):

@@ -93,10 +93,9 @@ EFFECTS_REGISTRY = [
     },
     {
         "key":    "seductive_f",
-        "label":  "💃  Seduction (F)",
-        "desc":   "280Hz sensual female",
-        "fn":     AudioEffects.seductive,
-        "kwargs": {"gender": "female"},
+        "label":  "💋  Seductive (F)",
+        "desc":   "Intimate, warm sensual female voice (close-mic breathiness & zero phase distortion)",
+        "fn":     AudioEffects.seductive_female,
     },
     {
         "key":    "saas_flash",
