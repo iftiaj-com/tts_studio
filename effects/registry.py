@@ -108,7 +108,7 @@ EFFECTS_REGISTRY = [
     {
         "key":    "cinematic",
         "label":  "🎬  Cinematic",
-        "desc":   "Deep, resonant & spacious trailer voice",
+        "desc":   "Soft, soothing & warm intimate voiceover (TLM 103 condenser)",
         "fn":     AudioEffects.cinematic,
     },
     {
