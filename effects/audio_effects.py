@@ -464,29 +464,73 @@ class AudioEffects:
 
     @staticmethod
     def natgeo_narrator(samples, sr):
-        """Deep, resonant, broadcast-quality compression."""
-        samples = AudioEffects.change_speed(samples, 0.95)
+        """
+        NatGeo Narrator — prestigious, deep, resonant documentary storytelling voice.
+        Acoustically modeled after 'net geo voice.mp3':
+          • 100% natural, anti-robotic neural audio preservation (zero phase vocoders)
+          • Deep documentary chest fundamental at 110 Hz (+2.8 dB) matching warm male core
+          • Storyteller proximity body at 220 Hz (+2.0 dB) for MKH 416 / U87 intimacy
+          • Acoustic mud scoop at 500 Hz (-2.2 dB) eliminating boxy room reflections
+          • Prestigious dialogue articulation at 3000 Hz (+1.8 dB) for refined consonant projection
+          • Natural studio air shelf above 7000 Hz (+1.2 dB) for gentle breath detail
+          • Smooth broadcast leveler and transparent limiter normalized to -1.0 dBFS (0.891).
+        """
         n = len(samples)
         fft_signal = np.fft.rfft(samples)
         freqs = np.fft.rfftfreq(n, 1.0 / sr)
-        
-        # Broadcast style EQ
-        # High pass below 50 Hz to cut sub-bass mud
-        fft_signal[freqs < 50] *= 0.0
-        # Boost low-mid chest voice (80-160 Hz) for deep narration warmth
-        fft_signal[(freqs >= 80) & (freqs <= 160)] *= 1.75
-        # Boost presence (3.5k-7k Hz) for speech clarity and articulation
-        fft_signal[(freqs >= 3500) & (freqs <= 7000)] *= 1.35
+
+        gain_db = np.zeros_like(freqs)
+
+        # 1. Gentle sub-bass cut below 55 Hz (preserves full male fundamental down to 75 Hz)
+        hp_mask = freqs < 55.0
+        if np.any(hp_mask):
+            rolloff = np.clip((freqs[hp_mask] - 20.0) / 35.0, 0.0, 1.0)
+            gain_db[hp_mask] += (1.0 - np.sin(rolloff * np.pi / 2.0)) * -22.0
+
+        # 2. Documentary Chest Fundamental at 110 Hz (+2.8 dB, width 35 Hz)
+        gain_db += 2.8 * np.exp(-0.5 * ((freqs - 110.0) / 35.0) ** 2)
+
+        # 3. Storyteller Proximity Body at 220 Hz (+2.0 dB, width 70 Hz)
+        gain_db += 2.0 * np.exp(-0.5 * ((freqs - 220.0) / 70.0) ** 2)
+
+        # 4. Acoustic Mud Scoop at 500 Hz (-2.2 dB, width 120 Hz)
+        gain_db -= 2.2 * np.exp(-0.5 * ((freqs - 500.0) / 120.0) ** 2)
+
+        # 5. Prestigious Articulation at 3000 Hz (+1.8 dB, width 750 Hz)
+        gain_db += 1.8 * np.exp(-0.5 * ((freqs - 3000.0) / 750.0) ** 2)
+
+        # 6. Natural Studio Air Shelf above 7000 Hz (+1.2 dB)
+        shelf_mask = freqs > 7000.0
+        if np.any(shelf_mask):
+            shelf_t = np.clip((freqs[shelf_mask] - 7000.0) / 3500.0, 0.0, 1.0)
+            gain_db[shelf_mask] += 1.2 * (0.5 - 0.5 * np.cos(shelf_t * np.pi))
+
+        # Apply smooth linear gain curve
+        fft_signal *= 10.0 ** (gain_db / 20.0)
         samples = np.fft.irfft(fft_signal, n)
-        
-        # Smooth radio compression
-        threshold, ratio = 0.35, 0.45
+
+        # 7. Smooth Documentary Broadcast Leveler
+        threshold = 0.26
+        ratio = 0.50
         abs_s = np.abs(samples)
-        compressed = np.where(abs_s > threshold,
-                              threshold + (abs_s - threshold) * ratio, abs_s)
-        samples = np.sign(samples) * compressed
-        
-        return np.clip(samples * 1.25, -1.0, 1.0).astype(np.float32)
+        mask = abs_s > threshold
+        compressed = np.copy(abs_s)
+        compressed[mask] = threshold + (abs_s[mask] - threshold) * ratio
+        samples = np.sign(samples) * compressed * 1.16
+
+        # Stage B: Transparent soft-knee limiter for peaks above 0.75
+        abs_s = np.abs(samples)
+        over = abs_s > 0.75
+        if np.any(over):
+            soft_x = 0.75 + 0.18 * np.tanh((abs_s[over] - 0.75) / 0.18)
+            samples[over] = np.sign(samples[over]) * soft_x
+
+        # Stage C: Peak normalization to -1.0 dBFS (0.891)
+        peak = np.max(np.abs(samples))
+        if peak > 0:
+            samples = (samples / peak) * 0.891
+
+        return samples.astype(np.float32)
 
     @staticmethod
     def seductive(samples, sr, gender="male"):

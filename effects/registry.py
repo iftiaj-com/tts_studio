@@ -82,7 +82,7 @@ EFFECTS_REGISTRY = [
     {
         "key":    "natgeo",
         "label":  "🎥  NatGeo",
-        "desc":   "Deep resonant narrator",
+        "desc":   "Deep, prestigious documentary narrator voice (MKH 416 warmth)",
         "fn":     AudioEffects.natgeo_narrator,
     },
     {
