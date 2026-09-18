@@ -625,28 +625,72 @@ class AudioEffects:
 
     @staticmethod
     def arjun(samples, sr):
-        """Arjun (Tech Reviewer) — energetic, crisp, YouTube-style voice."""
-        samples = AudioEffects.change_speed(samples, 1.12)
-        samples = AudioEffects.pitch_shift(samples, sr, semitones=1.0)
+        """
+        Arjun (Tech Reviewer) — warm, articulate, confident YouTube-style voice.
+        Acoustically modeled after 'Arjun voice.mp3':
+          • 100% natural, human voice preservation (zero phase vocoder or robotic phasiness)
+          • Warm male chest resonance & proximity body at 125 Hz & 220 Hz (Shure SM7B broadcast tone)
+          • Mud cleanup dip at 420 Hz
+          • YouTuber presence & crisp consonant definition at 3.2 kHz
+          • Studio condenser air sheen above 7 kHz
+          • Transparent broadcast leveling normalized to -0.8 dBFS (0.912).
+        """
         n = len(samples)
         fft_signal = np.fft.rfft(samples)
         freqs = np.fft.rfftfreq(n, 1.0 / sr)
-        
-        # High pass at 85 Hz to remove desk hum/room tone
-        fft_signal[freqs < 85] *= 0.0
-        # Boost key vocal presence range (2.5k - 5.5k Hz) for YouTuber style punch
-        fft_signal[(freqs >= 2500) & (freqs <= 5500)] *= 1.55
-        # Muffled mids cut (300 - 500 Hz)
-        fft_signal[(freqs >= 300) & (freqs <= 500)] *= 0.85
+
+        gain_db = np.zeros_like(freqs)
+
+        # 1. Gentle sub-bass cut below 65 Hz (preserves full male fundamental down to 80 Hz)
+        hp_mask = freqs < 65.0
+        if np.any(hp_mask):
+            rolloff = np.clip((freqs[hp_mask] - 20.0) / 45.0, 0.0, 1.0)
+            gain_db[hp_mask] += (1.0 - np.sin(rolloff * np.pi / 2.0)) * -22.0
+
+        # 2. Key Male Chest Fundamental at 125 Hz (+2.2 dB, matching Arjun's 120Hz core)
+        gain_db += 2.2 * np.exp(-0.5 * ((freqs - 125.0) / 40.0) ** 2)
+
+        # 3. Proximity Vocal Body at 220 Hz (+1.5 dB)
+        gain_db += 1.5 * np.exp(-0.5 * ((freqs - 220.0) / 70.0) ** 2)
+
+        # 4. Clean boxy mid resonance at 420 Hz (-1.2 dB)
+        gain_db -= 1.2 * np.exp(-0.5 * ((freqs - 420.0) / 80.0) ** 2)
+
+        # 5. YouTuber Presence & Articulation at 3200 Hz (+2.8 dB, wide Q)
+        gain_db += 2.8 * np.exp(-0.5 * ((freqs - 3200.0) / 900.0) ** 2)
+
+        # 6. Air & Sparkle shelf above 7000 Hz (+1.8 dB)
+        shelf_mask = freqs > 7000.0
+        if np.any(shelf_mask):
+            shelf_t = np.clip((freqs[shelf_mask] - 7000.0) / 3500.0, 0.0, 1.0)
+            gain_db[shelf_mask] += 1.8 * (0.5 - 0.5 * np.cos(shelf_t * np.pi))
+
+        # Apply smooth linear gain curve
+        fft_signal *= 10.0 ** (gain_db / 20.0)
         samples = np.fft.irfft(fft_signal, n)
-        
-        # YouTuber limiting/compression
-        threshold, ratio = 0.22, 0.38
+
+        # 7. Transparent Broadcast Leveler (Brings dialogue in-your-face, preserves micro-dynamics)
+        threshold = 0.26
+        ratio = 0.50
         abs_s = np.abs(samples)
-        compressed = np.where(abs_s > threshold,
-                              threshold + (abs_s - threshold) * ratio, abs_s)
-        samples = np.sign(samples) * compressed * 1.35
-        return np.clip(samples, -1.0, 1.0).astype(np.float32)
+        mask = abs_s > threshold
+        compressed = np.copy(abs_s)
+        compressed[mask] = threshold + (abs_s[mask] - threshold) * ratio
+        samples = np.sign(samples) * compressed * 1.22
+
+        # Stage B: Transparent soft-knee limiter for peaks above 0.75
+        abs_s = np.abs(samples)
+        over = abs_s > 0.75
+        if np.any(over):
+            soft_x = 0.75 + 0.20 * np.tanh((abs_s[over] - 0.75) / 0.20)
+            samples[over] = np.sign(samples[over]) * soft_x
+
+        # Stage C: Peak normalization to -0.8 dBFS (0.912)
+        peak = np.max(np.abs(samples))
+        if peak > 0:
+            samples = (samples / peak) * 0.912
+
+        return samples.astype(np.float32)
 
     @staticmethod
     def dramatic_ads(samples, sr):

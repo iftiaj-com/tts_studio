@@ -114,7 +114,7 @@ EFFECTS_REGISTRY = [
     {
         "key":    "arjun",
         "label":  "🏹  Arjun",
-        "desc":   "Energetic crisp YouTube reviewer",
+        "desc":   "Warm & crisp YouTube reviewer (SM7B broadcast tone)",
         "fn":     AudioEffects.arjun,
     },
     {
