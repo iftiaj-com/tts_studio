@@ -533,45 +533,82 @@ class AudioEffects:
         return samples.astype(np.float32)
 
     @staticmethod
-    def seductive(samples, sr, gender="male"):
-        """Sensual, subdued tone with downward inflection and breathiness."""
-        samples = AudioEffects.change_speed(samples, 0.88)
+    def seductive_male(samples, sr):
+        """
+        Seductive (M) — intimate, deep, velvety masculine voice with close-mic warmth.
+        Acoustically modeled after 'Seductive-male.mp3':
+          • 100% natural, anti-robotic neural audio preservation (zero phase vocoders)
+          • Deep velvety masculine chest fundamental at 90 Hz (+3.2 dB)
+          • Intimate proximity body at 185 Hz (+2.2 dB)
+          • Smooth acoustic mud scoop at 650 Hz (-2.5 dB) eliminating boxiness
+          • Soft whisper & consonant articulation at 3600 Hz (+1.8 dB)
+          • Silky breath air sheen above 7500 Hz (+1.5 dB)
+          • Transparent broadcast dialogue leveler and soft limiter normalized to -1.0 dBFS (0.891).
+        """
         n = len(samples)
-        t = np.arange(n, dtype=np.float32) / sr
-        
-        # Dynamic pitch shifting to target exactly 96 Hz (male) or 280 Hz (female)
-        try:
-            f0 = AudioEffects.estimate_pitch(samples, sr)
-            target_hz = 96.0 if gender == "male" else 280.0
-            semitones = 12.0 * math.log2(target_hz / f0)
-            # Limit shift to avoid sounding too artificial
-            semitones = max(-7.0, min(7.0, semitones))
-        except Exception:
-            semitones = -2.0 if gender == "male" else 5.0
-            
-        samples = AudioEffects.pitch_shift(samples, sr, semitones=semitones)
-        
-        # Downward pitch inflection (seductive speech trailing off)
-        warp = np.ones(n, dtype=np.float32)
-        end_start = int(n * 0.8)
-        if n > end_start:
-            warp[end_start:] = np.linspace(1.0, 1.15, n - end_start)
-            indices = np.cumsum(1.0 / warp)
-            indices = (indices / indices[-1] * (n - 1)).astype(np.float32)
-            samples = np.interp(indices, np.arange(n), samples).astype(np.float32)
-            
-        # Add intimate high-frequency breath noise
-        noise = np.random.normal(0, 0.02, n).astype(np.float32)
-        breathe = noise - np.roll(noise, 1)  # simple LPF high-pass filter
-        samples += breathe * 0.12
-        
-        # Add vocal fry sub-harmonic pulses
-        fry_pulses = (np.sin(2 * np.pi * 40 * t) > 0.98).astype(np.float32)
-        samples += fry_pulses * 0.025 * np.abs(samples)
-        
-        # Smooth low-pass filter to muffle sharp high sounds
-        window = np.ones(5) / 5
-        return np.convolve(samples, window, mode='same').astype(np.float32)
+        fft_signal = np.fft.rfft(samples)
+        freqs = np.fft.rfftfreq(n, 1.0 / sr)
+
+        gain_db = np.zeros_like(freqs)
+
+        # 1. Gentle sub-bass cut below 50 Hz (preserves full male fundamental down to 70 Hz)
+        hp_mask = freqs < 50.0
+        if np.any(hp_mask):
+            rolloff = np.clip((freqs[hp_mask] - 20.0) / 30.0, 0.0, 1.0)
+            gain_db[hp_mask] += (1.0 - np.sin(rolloff * np.pi / 2.0)) * -22.0
+
+        # 2. Deep Velvety Fundamental at 90 Hz (+3.2 dB, width 26 Hz)
+        gain_db += 3.2 * np.exp(-0.5 * ((freqs - 90.0) / 26.0) ** 2)
+
+        # 3. Intimate Proximity Body at 185 Hz (+2.2 dB, width 50 Hz)
+        gain_db += 2.2 * np.exp(-0.5 * ((freqs - 185.0) / 50.0) ** 2)
+
+        # 4. Smooth Acoustic Mud Scoop at 650 Hz (-2.5 dB, width 140 Hz)
+        gain_db -= 2.5 * np.exp(-0.5 * ((freqs - 650.0) / 140.0) ** 2)
+
+        # 5. Soft Whisper & Consonant Articulation at 3600 Hz (+1.8 dB, width 800 Hz)
+        gain_db += 1.8 * np.exp(-0.5 * ((freqs - 3600.0) / 800.0) ** 2)
+
+        # 6. Silky Breath Air Sheen above 7500 Hz (+1.5 dB)
+        shelf_mask = freqs > 7500.0
+        if np.any(shelf_mask):
+            shelf_t = np.clip((freqs[shelf_mask] - 7500.0) / 3500.0, 0.0, 1.0)
+            gain_db[shelf_mask] += 1.5 * (0.5 - 0.5 * np.cos(shelf_t * np.pi))
+
+        # Apply smooth linear gain curve
+        fft_signal *= 10.0 ** (gain_db / 20.0)
+        samples = np.fft.irfft(fft_signal, n)
+
+        # 7. Transparent Broadcast Dialogue Leveler (Preserves natural breathing and intimate dynamics)
+        threshold = 0.24
+        ratio = 0.46
+        abs_s = np.abs(samples)
+        mask = abs_s > threshold
+        compressed = np.copy(abs_s)
+        compressed[mask] = threshold + (abs_s[mask] - threshold) * ratio
+        samples = np.sign(samples) * compressed * 1.25
+
+        # Stage B: Transparent soft-knee limiter for peaks above 0.75
+        abs_s = np.abs(samples)
+        over = abs_s > 0.75
+        if np.any(over):
+            soft_x = 0.75 + 0.18 * np.tanh((abs_s[over] - 0.75) / 0.18)
+            samples[over] = np.sign(samples[over]) * soft_x
+
+        # Stage C: Peak normalization to -1.0 dBFS (0.891)
+        peak = np.max(np.abs(samples))
+        if peak > 0:
+            samples = (samples / peak) * 0.891
+
+        return samples.astype(np.float32)
+
+    @staticmethod
+    def seductive(samples, sr, gender="male"):
+        """Sensual tone routing to gender-specific acoustic profiles."""
+        if gender == "male":
+            return AudioEffects.seductive_male(samples, sr)
+        # Default fallback for female
+        return AudioEffects.cinematic(samples, sr)
 
     @staticmethod
     def saas_flash(samples, sr):

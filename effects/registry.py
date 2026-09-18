@@ -88,9 +88,8 @@ EFFECTS_REGISTRY = [
     {
         "key":    "seductive_m",
         "label":  "🍷  Seductive (M)",
-        "desc":   "96Hz subdued male",
-        "fn":     AudioEffects.seductive,
-        "kwargs": {"gender": "male"},
+        "desc":   "Intimate, deep velvety masculine voice (close-mic warmth & zero phase distortion)",
+        "fn":     AudioEffects.seductive_male,
     },
     {
         "key":    "seductive_f",
