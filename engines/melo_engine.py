@@ -2,13 +2,28 @@
 engines/melo_engine.py  –  MeloTTS adapter
 """
 import os
+import sys
+import logging
 from engines.base import BaseTTSEngine
 from core.model_cache import MODEL_CACHE
+
+logger = logging.getLogger("VoiceCraft")
+
+# In frozen PyInstaller app, ensure NLTK can locate bundled nltk_data inside _internal
+if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+    try:
+        import nltk
+        bundle_nltk = os.path.join(sys._MEIPASS, "nltk_data")
+        if os.path.exists(bundle_nltk) and bundle_nltk not in nltk.data.path:
+            nltk.data.path.insert(0, bundle_nltk)
+    except Exception as e:
+        logger.debug("Could not configure bundled NLTK data path: %s", e)
 
 try:
     from melo.api import TTS as MeloTTS
     _AVAILABLE = True
-except Exception:
+except Exception as e:
+    logger.warning("MeloTTS is not available: %s", e, exc_info=True)
     _AVAILABLE = False
 
 _NLTK_READY = False
