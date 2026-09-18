@@ -126,7 +126,7 @@ EFFECTS_REGISTRY = [
     {
         "key":    "techy",
         "label":  "💻  Techy",
-        "desc":   "Clean & precise software demo style",
+        "desc":   "Deep, calm & articulate developer tutorial voice (clean SM7B)",
         "fn":     AudioEffects.techy,
     },
     {

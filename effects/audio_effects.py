@@ -721,27 +721,70 @@ class AudioEffects:
 
     @staticmethod
     def techy(samples, sr):
-        """Techy — articulate, proximity-warm voice for code/tech explanations."""
-        samples = AudioEffects.change_speed(samples, 1.08)
-        samples = AudioEffects.pitch_shift(samples, sr, semitones=-1.0)
+        """
+        Techy — calm, articulate, deep developer tutorial voice for code explanations.
+        Acoustically modeled after 'Voiceover - what this function do.mp3':
+          • 100% natural, anti-robotic neural audio preservation (zero phase vocoders)
+          • Deep developer chest fundamental at 98 Hz (+3.0 dB) matching ~95 Hz core
+          • Warm proximity body at 190 Hz (+1.8 dB)
+          • Clean acoustic scoop at 520 Hz (-2.2 dB) eliminating boxy room reflections
+          • Code & syntax articulation boost at 3.2 kHz (+2.2 dB)
+          • Transparent high-end air sheen above 6.5 kHz (+1.5 dB)
+          • Transparent broadcast dialogue leveler and soft limiter normalized to -1.0 dBFS (0.891).
+        """
         n = len(samples)
         fft_signal = np.fft.rfft(samples)
         freqs = np.fft.rfftfreq(n, 1.0 / sr)
-        
-        # Clean desk rumble
-        fft_signal[freqs < 90] *= 0.0
-        # Proximity warm mic effect (140 - 240 Hz)
-        fft_signal[(freqs >= 140) & (freqs <= 240)] *= 1.45
-        # Scoop low mids
-        fft_signal[(freqs >= 350) & (freqs <= 650)] *= 0.82
-        # Articulation boost (3k - 6k Hz)
-        fft_signal[(freqs >= 3000) & (freqs <= 6000)] *= 1.5
+
+        gain_db = np.zeros_like(freqs)
+
+        # 1. Gentle sub-bass cut below 55 Hz (preserves full male fundamental down to 75 Hz)
+        hp_mask = freqs < 55.0
+        if np.any(hp_mask):
+            rolloff = np.clip((freqs[hp_mask] - 20.0) / 35.0, 0.0, 1.0)
+            gain_db[hp_mask] += (1.0 - np.sin(rolloff * np.pi / 2.0)) * -22.0
+
+        # 2. Deep Developer Fundamental at 98 Hz (+3.0 dB, width 28 Hz)
+        gain_db += 3.0 * np.exp(-0.5 * ((freqs - 98.0) / 28.0) ** 2)
+
+        # 3. Proximity Vocal Body at 190 Hz (+1.8 dB, width 55 Hz)
+        gain_db += 1.8 * np.exp(-0.5 * ((freqs - 190.0) / 55.0) ** 2)
+
+        # 4. Clean Acoustic Scoop at 520 Hz (-2.2 dB, width 120 Hz)
+        gain_db -= 2.2 * np.exp(-0.5 * ((freqs - 520.0) / 120.0) ** 2)
+
+        # 5. Code & Technical Syntax Articulation at 3200 Hz (+2.2 dB, width 800 Hz)
+        gain_db += 2.2 * np.exp(-0.5 * ((freqs - 3200.0) / 800.0) ** 2)
+
+        # 6. Top-End Air Sheen above 6500 Hz (+1.5 dB)
+        shelf_mask = freqs > 6500.0
+        if np.any(shelf_mask):
+            shelf_t = np.clip((freqs[shelf_mask] - 6500.0) / 3500.0, 0.0, 1.0)
+            gain_db[shelf_mask] += 1.5 * (0.5 - 0.5 * np.cos(shelf_t * np.pi))
+
+        # Apply smooth linear gain curve
+        fft_signal *= 10.0 ** (gain_db / 20.0)
         samples = np.fft.irfft(fft_signal, n)
-        
-        # Soft compressor
-        threshold, ratio = 0.2, 0.42
+
+        # 7. Transparent Broadcast Dialogue Leveler
+        threshold = 0.25
+        ratio = 0.48
         abs_s = np.abs(samples)
-        compressed = np.where(abs_s > threshold,
-                              threshold + (abs_s - threshold) * ratio, abs_s)
-        samples = np.sign(samples) * compressed * 1.45
-        return np.tanh(samples).astype(np.float32)
+        mask = abs_s > threshold
+        compressed = np.copy(abs_s)
+        compressed[mask] = threshold + (abs_s[mask] - threshold) * ratio
+        samples = np.sign(samples) * compressed * 1.25
+
+        # Stage B: Transparent soft-knee limiter for peaks above 0.75
+        abs_s = np.abs(samples)
+        over = abs_s > 0.75
+        if np.any(over):
+            soft_x = 0.75 + 0.18 * np.tanh((abs_s[over] - 0.75) / 0.18)
+            samples[over] = np.sign(samples[over]) * soft_x
+
+        # Stage C: Peak normalization to -1.0 dBFS (0.891)
+        peak = np.max(np.abs(samples))
+        if peak > 0:
+            samples = (samples / peak) * 0.891
+
+        return samples.astype(np.float32)
