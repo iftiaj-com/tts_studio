@@ -23,6 +23,15 @@ try:
     from melo.api import TTS as MeloTTS
     _AVAILABLE = True
 except Exception as e:
+    try:
+        log_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.dirname(__file__))
+        err_file = os.path.join(log_dir, "melo_startup_error.log")
+        import traceback
+        with open(err_file, "w", encoding="utf-8") as f:
+            f.write(f"MeloTTS failed to load:\n{e}\n\nTraceback:\n")
+            traceback.print_exc(file=f)
+    except Exception:
+        pass
     logger.warning("MeloTTS is not available: %s", e, exc_info=True)
     _AVAILABLE = False
 

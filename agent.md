@@ -366,6 +366,16 @@ If the dropdown is short, check the adapter's import rather than the UI:
 fall back between two backends, so it always appears and reports problems at
 synthesis time instead.
 
+`MeloEngine` unconditionally imports cleaner modules for all supported languages
+(English, Japanese, Korean, Chinese, French, Spanish) upon `from melo.api import TTS`.
+When bundling with PyInstaller, the following must be collected via `--collect-all`:
+`melo`, `g2p_en`, `unidic_lite`, `unidic`, `pykakasi`, `regex`, `jamo`, `anyascii`,
+`cn2an`, `jieba`, `pypinyin`, `librosa`, `cached_path`, `gruut`, `gruut_lang_*`,
+and `nltk_data` (corpora & taggers). If any package or its non-Python data files
+are omitted, MeloTTS fails to import and is omitted from the dropdown. Errors are
+written to `melo_startup_error.log` in the application directory.
+
+
 ### Kokoro has two backends
 
 | Backend | Weights | Notes |

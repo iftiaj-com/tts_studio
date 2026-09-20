@@ -18,6 +18,14 @@ _REQUIRED = {
     "melo":           "MeloTTS engine",
     "g2p_en":         "MeloTTS G2P module",
     "unidic_lite":    "MeloTTS Japanese dictionary",
+    "pykakasi":       "MeloTTS Japanese transliteration",
+    "regex":          "NLTK tokenization",
+    "jamo":           "MeloTTS Korean phonemizer",
+    "anyascii":       "MeloTTS Korean romanization",
+    "cn2an":          "MeloTTS Chinese numbers",
+    "jieba":          "MeloTTS Chinese segmentation",
+    "pypinyin":       "MeloTTS Chinese pinyin",
+    "librosa":        "MeloTTS audio processing",
     "pyttsx3":        "pyttsx3 engine",
     "faster_whisper": "word-level subtitles",
     "customtkinter":  "GUI",
@@ -99,6 +107,14 @@ def build():
         "--collect-all", "gruut_lang_fr",
         "--collect-all", "cached_path",
         "--collect-all", "nltk",
+        "--collect-all", "pykakasi",
+        "--collect-all", "regex",
+        "--collect-all", "jamo",
+        "--collect-all", "anyascii",
+        "--collect-all", "cn2an",
+        "--collect-all", "jieba",
+        "--collect-all", "pypinyin",
+        "--collect-all", "librosa",
         "--collect-all", "piper",
         "--collect-all", "soundfile",
         "--collect-all", "pygame",
@@ -107,6 +123,17 @@ def build():
         "--distpath", str(dist_dir),
         str(main_script)
     ]
+
+    # Locate and bundle NLTK data
+    try:
+        import nltk
+        for p in nltk.data.path:
+            if os.path.exists(p) and os.listdir(p):
+                print(f"[*] Bundling NLTK data from: {p}")
+                command.extend(["--add-data", f"{p};nltk_data"])
+                break
+    except Exception as e:
+        print(f"[*] Warning: Could not locate NLTK data directory: {e}")
     
     # Presence is not enough: a truncated model bundles cleanly and only fails
     # at runtime with "INVALID_PROTOBUF", which is how a 78 MB stub once shipped.
@@ -124,8 +151,33 @@ def build():
     
     try:
         subprocess.check_call(command)
-        print("\n[+] Build successful!")
+        print("\n[+] PyInstaller compilation successful!")
         print(f"[+] Application located in: {dist_dir / 'TTS_Studio'}")
+
+        # Post-build engine verification
+        print("\n[*] Validating built application engines...")
+        verify_cmd = [
+            sys.executable, "-c",
+            (
+                "import sys, os\n"
+                f"internal = r'{dist_dir / 'TTS_Studio' / '_internal'}'\n"
+                "sys.frozen = True\n"
+                "sys._MEIPASS = internal\n"
+                f"sys.executable = r'{dist_dir / 'TTS_Studio' / 'TTS_Studio.exe'}'\n"
+                "sys.path.insert(0, internal)\n"
+                "from engines.registry import get_available_engines\n"
+                "avail = [e.name for e in get_available_engines()]\n"
+                "print('[+] Available engines detected in build:')\n"
+                "for name in avail:\n"
+                "    print(f'     - {name}')\n"
+                "if 'MeloTTS (Multi-Lingual)' not in avail:\n"
+                "    print('[!] ERROR: MeloTTS was NOT detected in build!')\n"
+                "    sys.exit(1)\n"
+                "else:\n"
+                "    print('[+] SUCCESS: MeloTTS is verified in build!')\n"
+            )
+        ]
+        subprocess.check_call(verify_cmd)
         
         # 4. Final instructions
         print("\n=== FINAL STEPS ===")
