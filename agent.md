@@ -22,7 +22,7 @@ Welcome to the **VoiceCraft** codebase guide. This document serves as a technica
 
 ### Key Highlights
 * **Multi-Engine Support**: Supports cloud-based APIs (Google Translate TTS, Microsoft Edge Neural) and local offline AI models (Kokoro-82M, MeloTTS, Piper TTS, and local system SAPI5 voices).
-* **Numpy-Based DSP Pipeline**: Apply 18+ voice effects (Vocoder, Glitch, Reverb, Pitch Shifting) and curated social media profiles (ASMR Cinematic, SaaS Flash, YouTube Reviewer).
+* **Numpy-Based DSP Pipeline**: Apply 34+ voice effects (Darth Vader, Vocoder 2, Climax, Chorus, Vocoder, Harmonizer Choir, Stutter, Bitcrush, Megaphone, Delay, Plate Reverb, Shimmer Reverb, Reverse Reverb, Robotic, Demonic, Glitch, Reverb, Pitch Shifting, Radio) and curated social media profiles (ASMR Cinematic, SaaS Flash, YouTube Reviewer).
 * **Real-time Audio Customizations**: Fine-tune speed, strip silent pauses automatically, mix background ambiance (airplane rumble, forest crickets, or custom imports), and generate synced SRT subtitles.
 * **Responsive Architecture**: Decoupled UI widgets and a multi-threaded execution queue ensure that the GUI never freezes during heavy local neural generation.
 

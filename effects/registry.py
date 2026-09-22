@@ -33,14 +33,62 @@ EFFECTS_REGISTRY = [
     {
         "key":    "vocoder",
         "label":  "🤖  Vocoder",
-        "desc":   "Robotic monotone voice",
+        "desc":   "Polyphonic synth chords & Daft Punk robotic harmonies",
         "fn":     AudioEffects.vocoder,
+    },
+    {
+        "key":    "vocoder2",
+        "label":  "🤖  Vocoder 2",
+        "desc":   "Daft Punk robotic synth chords & vocal reinforcement",
+        "fn":     AudioEffects.vocoder2,
+    },
+    {
+        "key":    "robotic",
+        "label":  "🤖  Robotic",
+        "desc":   "Extreme pitch quantization & zero retune speed (pop autotune)",
+        "fn":     AudioEffects.robotic,
+    },
+    {
+        "key":    "demonic",
+        "label":  "👹  Demonic",
+        "desc":   "Pitch down an octave for a dark menacing voice (-12 semitones)",
+        "fn":     AudioEffects.demonic,
+    },
+    {
+        "key":    "demonic2",
+        "label":  "👹  Demonic 2",
+        "desc":   "Octave-down dark voice with clear word intelligibility",
+        "fn":     AudioEffects.demonic2,
+    },
+    {
+        "key":    "darth_vader",
+        "label":  "⚔️  Darth Vader",
+        "desc":   "Deep Sith baritone, helmet cavity resonance & mechanical respirator",
+        "fn":     AudioEffects.darth_vader,
+    },
+    {
+        "key":    "harmonizer",
+        "label":  "👥  Harmonizer",
+        "desc":   "Automatic vocal chords & massive angelic choir ensemble",
+        "fn":     AudioEffects.harmonizer,
     },
     {
         "key":    "glitch",
         "label":  "🔀  Glitch",
         "desc":   "Random audio chunk repeats",
         "fn":     AudioEffects.glitch,
+    },
+    {
+        "key":    "stutter",
+        "label":  "✂️  Stutter",
+        "desc":   "Microscopic rhythmic snippets, rapid looping & ambient clouds",
+        "fn":     AudioEffects.stutter,
+    },
+    {
+        "key":    "bitcrush",
+        "label":  "👾  Bitcrush",
+        "desc":   "Harsh 8-bit retro video game & hyperpop downsampler",
+        "fn":     AudioEffects.bitcrusher,
     },
     {
         "key":    "ringmod",
@@ -55,6 +103,42 @@ EFFECTS_REGISTRY = [
         "fn":     AudioEffects.reverb,
     },
     {
+        "key":    "delay",
+        "label":  "🔁  Delay",
+        "desc":   "Tight rhythmic slapback echo with zero clutter to fill space",
+        "fn":     AudioEffects.delay,
+    },
+    {
+        "key":    "plate_reverb",
+        "label":  "💿  Plate Reverb",
+        "desc":   "Lush, bright metallic plate reverb & shimmering pop tail",
+        "fn":     AudioEffects.plate_reverb,
+    },
+    {
+        "key":    "shimmer_reverb",
+        "label":  "🌌  Shimmer Reverb",
+        "desc":   "Pitched-up octave tail blooming into a celestial angelic synth pad",
+        "fn":     AudioEffects.shimmer_reverb,
+    },
+    {
+        "key":    "reverse_reverb",
+        "label":  "👻  Reverse Reverb",
+        "desc":   "Backward crescendo reverb & ghostly pre-vocal swoosh",
+        "fn":     AudioEffects.reverse_reverb,
+    },
+    {
+        "key":    "chorus",
+        "label":  "🎭  Chorus",
+        "desc":   "Multiplies voice with subtle pitch & timing drift for a large group sound",
+        "fn":     AudioEffects.chorus,
+    },
+    {
+        "key":    "climax",
+        "label":  "🚀  Climax",
+        "desc":   "Dramatic sweeping metallic notches & intense transitional vocal riser",
+        "fn":     AudioEffects.climax,
+    },
+    {
         "key":    "pitch",
         "label":  "🎵  Pitch Shift",
         "desc":   "Shift pitch up (+3 semitones)",
@@ -64,7 +148,7 @@ EFFECTS_REGISTRY = [
     {
         "key":    "pilot",
         "label":  "✈️  Pilot",
-        "desc":   "Airplane intercom voice",
+        "desc":   "Cockpit intercom (VHF 3kHz bandpass, PTT clicks & avionics hum)",
         "fn":     AudioEffects.pilot_radio,
     },
     {
@@ -132,5 +216,17 @@ EFFECTS_REGISTRY = [
         "label":  "☎️  Telephone",
         "desc":   "Vintage 3.4kHz limited line voice",
         "fn":     AudioEffects.telephone,
+    },
+    {
+        "key":    "radio",
+        "label":  "📻  Radio",
+        "desc":   "Vintage AM broadcast voice (resonant speaker & warm RF saturation)",
+        "fn":     AudioEffects.radio,
+    },
+    {
+        "key":    "megaphone",
+        "label":  "📣  Megaphone",
+        "desc":   "Thin, nasal horn midrange & intimate lo-fi vocal projection",
+        "fn":     AudioEffects.megaphone,
     },
 ]
