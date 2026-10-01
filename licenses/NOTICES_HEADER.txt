@@ -1,0 +1,99 @@
+{app_title} {version}
+Third-party notices
+===================
+
+{app_title} is free software, licensed under the GNU General Public License,
+version 3 or (at your option) any later version. The full text is in
+LICENSE.txt next to this file. It comes with NO WARRANTY.
+
+This program bundles third-party software, data and model weights. Each part
+keeps its own license. This file lists them. The texts of the common
+licenses are in the "licenses" folder. Python package license texts follow
+at the end of this file.
+
+
+SOURCE CODE OFFER
+-----------------
+The complete source code of {app_title} {version}, and the build script that
+produced this program, are available at:
+
+    {source_url}
+
+For the GPL and LGPL parts listed below, the corresponding source code is
+available from the upstream projects named for each part, at the exact
+versions listed in the "Python packages" section. If any of those sources
+can no longer be found, write to the publisher through the address above
+and a copy will be provided, for at least three years after this release,
+for no more than the cost of making and sending it.
+
+
+COPYLEFT COMPONENTS
+-------------------
+These are bundled in the program folder (under _internal). You may replace
+the DLL files with compatible versions of your own.
+
+* espeak-ng (GPL-3.0-or-later) - https://github.com/espeak-ng/espeak-ng
+  Shipped as espeakng_loader\espeak-ng.dll, inside piper\espeakbridge.pyd,
+  and as the two espeak-ng-data folders.
+* piper-tts (GPL-3.0-or-later) - https://github.com/OHF-Voice/piper1-gpl
+* phonemizer-fork (GPL-3.0-or-later) - https://pypi.org/project/phonemizer-fork/
+* pykakasi and its dictionaries (GPL-3.0-or-later) - https://pypi.org/project/pykakasi/
+* Simpler-Kokoro (GPL-3.0) - https://pypi.org/project/Simpler-Kokoro/
+* FFmpeg libraries shipped with PyAV, in av.libs (LGPL-3.0-or-later as
+  configured), linked with libx264 and libx265 (GPL-2.0-or-later) -
+  https://ffmpeg.org , https://www.videolan.org/developers/x264.html ,
+  https://www.videolan.org/developers/x265.html , https://github.com/PyAV-Org/PyAV
+* libsndfile (LGPL-2.1-or-later), _soundfile_data\libsndfile_x64.dll -
+  https://github.com/libsndfile/libsndfile
+* pygame and SDL (pygame: LGPL-2.1; SDL2: zlib) - https://www.pygame.org
+* soxr (LGPL-2.1-or-later), num2words (LGPL-2.1) - see the package list.
+* certifi, tqdm, orjson, pyttsx3 (MPL-2.0, unmodified) - see the package list.
+
+
+NATIVE LIBRARIES
+----------------
+* NVIDIA CUDA runtime and cuDNN libraries (in _internal\torch\lib), shipped
+  with PyTorch. Redistributed under the NVIDIA CUDA Toolkit EULA,
+  https://docs.nvidia.com/cuda/eula/index.html , and the NVIDIA cuDNN
+  Software License Agreement,
+  https://docs.nvidia.com/deeplearning/cudnn/latest/reference/eula.html .
+  These are used only when an NVIDIA GPU is present. NVIDIA's terms take
+  precedence for these files.
+* Intel OpenMP runtime (libiomp5md.dll), shipped with PyTorch and CTranslate2.
+* Microsoft Visual C++ runtime DLLs, redistributed under the Visual Studio
+  redistribution terms.
+* Python 3.11 (PSF License), Tcl/Tk (BSD-style), OpenSSL 3 (Apache-2.0),
+  SQLite (public domain), libffi (MIT), zlib (zlib).
+
+
+BUNDLED MODELS AND DATA
+-----------------------
+* Kokoro-82M weights, ONNX export (kokoro-v1.0.onnx, voices.bin) -
+  Apache-2.0. https://huggingface.co/hexgrad/Kokoro-82M ,
+  https://github.com/thewh1teagle/kokoro-onnx . The model card lists its
+  training data and their attributions.
+* Piper voice en_US-ljspeech-medium - trained on the LJ Speech dataset, which
+  is in the public domain (https://keithito.com/LJ-Speech-Dataset/). Voice
+  from https://huggingface.co/rhasspy/piper-voices . Its MODEL_CARD is in
+  _internal\models\piper.
+* faster-whisper-base (MIT) - https://huggingface.co/Systran/faster-whisper-base
+* UniDic / unidic-lite and MeCab dictionaries - triple licensed GPL, LGPL or
+  BSD; used here under the BSD license. Texts in _internal\unidic\dicdir\licenses.
+* jieba dictionary (MIT). CMUdict (free use, acknowledgement requested).
+  NLTK taggers (MIT). NLTK punkt tokenizers (no license stated by NLTK).
+
+
+DOWNLOADED ON FIRST USE (NOT INCLUDED IN THIS INSTALLER)
+--------------------------------------------------------
+MeloTTS downloads its language checkpoints (myshell-ai/MeloTTS-*, MIT) and
+BERT language models from Hugging Face the first time a language is used.
+These are stored in %LOCALAPPDATA%\VoiceCraft\cache and are covered by their
+own licenses, shown on each model's Hugging Face page.
+
+
+PYTHON PACKAGES
+---------------
+Generated from the package metadata of this build. Name, version, license
+as declared by the package, and project URL. The full license texts that the
+packages ship follow after the list.
+

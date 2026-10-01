@@ -17,10 +17,14 @@ def get_whisper_model():
     def _load():
         import torch
         from faster_whisper import WhisperModel
+        from core.paths import bundle_dir
         use_cuda = torch.cuda.is_available()
+        # Installed builds ship Systran/faster-whisper-base so subtitles work
+        # offline; from source it comes from the Hugging Face cache.
+        bundled = bundle_dir() / "models" / "whisper-base"
         # Base model, sized for ~4GB VRAM
         return WhisperModel(
-            model_size_or_path="base",
+            model_size_or_path=str(bundled) if (bundled / "model.bin").exists() else "base",
             device="cuda" if use_cuda else "cpu",
             compute_type="float16" if use_cuda else "int8",
         )

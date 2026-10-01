@@ -22,7 +22,7 @@ Welcome to the **VoiceCraft** codebase guide. This document serves as a technica
 
 ### Key Highlights
 * **Multi-Engine Support**: Supports cloud-based APIs (Google Translate TTS, Microsoft Edge Neural) and local offline AI models (Kokoro-82M, MeloTTS, Piper TTS, and local system SAPI5 voices).
-* **Numpy-Based DSP Pipeline**: Apply 18+ voice effects (Vocoder, Glitch, Reverb, Pitch Shifting) and curated social media profiles (ASMR Cinematic, SaaS Flash, YouTube Reviewer).
+* **Numpy-Based DSP Pipeline**: Apply 34+ voice effects (Darth Vader, Vocoder 2, Climax, Chorus, Vocoder, Harmonizer Choir, Stutter, Bitcrush, Megaphone, Delay, Plate Reverb, Shimmer Reverb, Reverse Reverb, Robotic, Demonic, Glitch, Reverb, Pitch Shifting, Radio) and curated social media profiles (ASMR Cinematic, SaaS Flash, YouTube Reviewer).
 * **Real-time Audio Customizations**: Fine-tune speed, strip silent pauses automatically, mix background ambiance (airplane rumble, forest crickets, or custom imports), and generate synced SRT subtitles.
 * **Responsive Architecture**: Decoupled UI widgets and a multi-threaded execution queue ensure that the GUI never freezes during heavy local neural generation.
 
@@ -37,9 +37,15 @@ Below is the directory structure mapping each component of the VoiceCraft applic
 | `tts_app.py` | Entry Point Script | The main application entry point. Initializes the CustomTkinter runtime and starts `VoiceCraftApp`. |
 | `run.ps1` | Shell Script | PowerShell launcher that automatically checks for and triggers the application via the local virtual environment (`venv_311`). |
 | `requirements.txt` | Package Dependencies | Dependencies grouped per engine, plus GUI, playback and DSP libraries. Ends with a note on why `kokoro-onnx` must be installed separately with `--no-deps`. |
-| `build_exe.py` | Packaging Script | PyInstaller compilation script that bundles dependencies (PyTorch, ONNX Runtime, CustomTkinter) into a portable executable. Refuses to run from an interpreter that cannot import every engine library, and refuses to bundle truncated Kokoro weights. Outputs `dist/TTS_Studio/TTS_Studio.exe`. |
-| `installer.iss` | Inno Setup Script | Packages the `dist/TTS_Studio/` PyInstaller output into a distributable Windows installer (`VoiceCraft-Setup-<version>.exe`) with Start Menu shortcuts, optional desktop icon, and an uninstaller. |
+| `build_exe.py` | Packaging Script | PyInstaller build of the public release. Bundles only the models the app reads, excludes gTTS/Edge and unused packages, prunes build-only files, writes license notices, then self-tests the frozen EXE. `--installer` also compiles `installer.iss`. Refuses to run from an interpreter that cannot import every engine library, and refuses to bundle truncated Kokoro weights. Outputs `dist/TTS_Studio/TTS_Studio.exe`. |
+| `installer.iss` | Inno Setup Script | Packages the `dist/TTS_Studio/` PyInstaller output into a distributable Windows installer (`VoiceCraft-Setup-<version>.exe`) with a GPL license page, Start Menu shortcuts, optional desktop icon, and an uninstaller. |
+| `LICENSE.txt`, `licenses/` | Legal | The app is GPL-3.0-or-later. `licenses/` holds the other license texts and `NOTICES_HEADER.txt`, the hand-written top of the generated `THIRD_PARTY_NOTICES.txt`. |
+| `assets/`, `tools/make_assets.py` | Branding | App icon (`voicecraft.ico`) and splash image, generated from the design tokens. |
 | **`core/`** | Directory | Shared module containing core configuration parameters and system utilities. |
+| `├── version.py` | Product Identity | Single source of truth for name, version, publisher and source URL. Bump the version here only. |
+| `├── paths.py` | File Locations | `bundle_dir()` (read-only app files), `user_dir()` (`%LOCALAPPDATA%\VoiceCraft`), `output_dir()` (`Documents\VoiceCraft`). Also routes logs to `%LOCALAPPDATA%\VoiceCraft\logs` in the frozen build. |
+| `├── audio_io.py` | Audio I/O | MP3 encode and non-WAV decode through soundfile's libsndfile, so no ffmpeg is needed. |
+| `├── selftest.py` | Self-test | `TTS_Studio.exe --selftest report.json` runs every offline engine headless and checks real output. |
 | `├── constants.py` | Configuration Module | Holds application-wide design tokens (colors, font configurations) and static lists of languages/voices. |
 | `├── model_cache.py` | Model Cache | Thread-safe, idle-expiring cache (`MODEL_CACHE`) for heavy TTS/ASR models. Reuses loaded instances between generations and evicts them after 5 minutes idle, returning CUDA memory to the OS. |
 | `├── temp_cleanup.py` | Housekeeping | Sweeps orphaned `tts_studio_*` temp directories left behind by a crash or force-quit. Called on startup. |
@@ -322,26 +328,48 @@ You can package VoiceCraft into a standalone Windows directory:
    `python build_exe.py` silently produces an EXE without Kokoro, Piper, MeloTTS
    or subtitles. `_check_interpreter()` now aborts the build and names the
    missing packages rather than shipping a partial bundle.
-2. The compilation system runs PyInstaller with instructions to gather dependencies like PyTorch, ONNX, and CustomTkinter automatically, and bundles local files (like the `models/` folder, `kokoro-v1.0.onnx`, and `voices.bin` if present) using PyInstaller's `--add-data` configuration so the app runs fully self-contained.
-3. Once completed, the distribution is saved in the `./dist/TTS_Studio/` folder (~6.0 GB, dominated by PyTorch). Run `TTS_Studio.exe` to launch the portable app.
+2. The build runs PyInstaller with `--collect-all` for the heavy libraries, then:
+   * bundles only the model files the app reads: `kokoro-v1.0.onnx`, `voices.bin`, each voice in `PIPER_VOICES` (with its `.MODEL_CARD`), and `Systran/faster-whisper-base` so subtitles work offline. The repo's `models/kokoro` and `models/voices` (PyTorch weights no code reads) are no longer shipped;
+   * excludes `gtts` and `edge_tts`, so the public build has no online engines, plus unused packages the dev venv holds (`_EXCLUDE`);
+   * stamps version, icon and splash screen into the EXE;
+   * prunes build-only files (`torch/lib/*.lib`, headers, C sources, pygame tests);
+   * writes `LICENSE.txt`, `THIRD_PARTY_NOTICES.txt` and `licenses/` into the app folder;
+   * runs `TTS_Studio.exe --selftest` and stops if any offline engine produces no audio.
+3. Once completed, the distribution is saved in the `./dist/TTS_Studio/` folder (dominated by the CUDA build of PyTorch). Run `TTS_Studio.exe` to launch the portable app.
 
 ### Building a Windows Installer (Setup.exe)
-For end users, a proper installer is preferable to distributing the raw portable folder. [installer.iss](file:///e:/Develop/Antigravity_testing/tts_app%20modular/installer.iss) is an [Inno Setup](https://jrsoftware.org/isinfo.php) script that wraps the PyInstaller output into a signed-ready `Setup.exe`.
+For end users, a proper installer is preferable to distributing the raw portable folder. [installer.iss](file:///e:/Develop/Antigravity_testing/tts_app%20modular/installer.iss) is an [Inno Setup](https://jrsoftware.org/isinfo.php) script that wraps the PyInstaller output into a single `Setup.exe`.
 
 1. Install Inno Setup 6 (one-time): `winget install JRSoftware.InnoSetup`.
-2. Build the portable app first (`.env_311\Scripts\python.exe build_exe.py`) — the installer script packages whatever is currently in `dist/TTS_Studio/`.
-3. Compile the installer:
+2. Bump `__version__` in `core/version.py`.
+3. Build app and installer in one step:
    ```powershell
-   & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss
+   .\venv_311\Scripts\python.exe build_exe.py --installer
    ```
-4. The resulting installer is written to `installer_output/VoiceCraft-Setup-<version>.exe` (gitignored, same as `dist/` and `build/`).
+   Or compile only the installer from an existing `dist/TTS_Studio/`:
+   `& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer.iss`
+4. The resulting installer is written to `installer_output/VoiceCraft-Setup-<version>.exe` (gitignored, same as `dist/` and `build/`). Compression takes a long time (lzma2/ultra64 over several GB).
 
 The installer:
-* Installs to `%LocalAppData%\Programs\VoiceCraft` by default and does **not** require admin rights (`PrivilegesRequired=lowest`).
-* Adds Start Menu shortcuts and a standard uninstaller entry under "Apps & Features".
-* Offers an optional desktop icon (unchecked by default) and can launch the app immediately after install.
-* Bump `MyAppVersion` at the top of `installer.iss` before cutting a new release.
-* No custom app icon is currently bundled — `installer.iss` falls back to Inno Setup's default icon for shortcuts. Add an `.ico` file and reference it via `SetupIconFile` / `IconFilename` to brand it.
+* Installs to `%LocalAppData%\Programs\VoiceCraft` and does **not** require admin rights (`PrivilegesRequired=lowest`).
+* Shows the GPL-3.0 license page, and adds Start Menu shortcuts for the app, the third-party notices and the uninstaller.
+* Deletes the old `{app}\_internal` on upgrade, since torch loads every DLL in `torch\lib` and stale ones would be loaded too.
+* Will not overwrite a running copy (`AppMutex`, created by `tts_app.py`).
+* On uninstall, asks before deleting `%LocalAppData%\VoiceCraft` (downloaded models, caches, logs). Saved audio in `Documents\VoiceCraft` is never touched.
+* A single Setup.exe holds up to about 4.2 GB compressed. Past that, enable `DiskSpanning` (see the note in `installer.iss`).
+* Unsigned by default, so Windows SmartScreen warns on first run. The signing hook is described at the top of `installer.iss`.
+
+### Where the installed app writes files
+The install folder is treated as read-only. See [paths.py](file:///e:/Develop/Antigravity_testing/tts_app%20modular/core/paths.py).
+
+| What | Location |
+| :--- | :--- |
+| Saved audio and SRT (default) | `Documents\VoiceCraft` |
+| Log file | `%LOCALAPPDATA%\VoiceCraft\logs\voicecraft.log` (previous run: `voicecraft.prev.log`) |
+| Hugging Face downloads (MeloTTS, Kokoro PyTorch path) | `%LOCALAPPDATA%\VoiceCraft\cache\huggingface` |
+| Re-downloaded Kokoro weights, NLTK data | `%LOCALAPPDATA%\VoiceCraft\models`, `...\nltk_data` |
+
+Running from source keeps the old layout (`output/`, repo-root weights, normal HF cache).
 
 ---
 
@@ -365,6 +393,21 @@ If the dropdown is short, check the adapter's import rather than the UI:
 `KokoroEngine` is the exception: it forces `_AVAILABLE = True` because it can
 fall back between two backends, so it always appears and reports problems at
 synthesis time instead.
+
+`MeloEngine` defers `from melo.api import TTS` to the first synthesis, because
+that import downloads six BERT tokenizers from Hugging Face. At startup it only
+checks that the `melo` package is present, so an offline launch no longer drops
+it from the list or delays the window. That import unconditionally loads cleaner
+modules for all supported languages (English, Japanese, Korean, Chinese, French, Spanish).
+When bundling with PyInstaller, the following must be collected via `--collect-all`:
+`melo`, `g2p_en`, `unidic_lite`, `unidic`, `pykakasi`, `regex`, `jamo`, `anyascii`,
+`cn2an`, `jieba`, `pypinyin`, `librosa`, `cached_path`, `gruut`, `gruut_lang_*`,
+and `nltk_data` (corpora & taggers). If any package or its non-Python data files
+are omitted, MeloTTS fails on first use. Errors are written to
+`melo_startup_error.log` in the logs folder (`%LOCALAPPDATA%\VoiceCraft\logs`
+when frozen, the repo root from source). The frozen self-test imports
+`melo.api` and fails the build on a missing module.
+
 
 ### Kokoro has two backends
 
@@ -404,6 +447,25 @@ To check a file by hand:
 ```powershell
 .\venv_311\Scripts\python.exe -c "from engines.kokoro_engine import _onnx_is_complete; print(_onnx_is_complete('kokoro-v1.0.onnx'))"
 ```
+
+### Non-ASCII install paths (espeak-ng)
+
+The default install is `C:\Users\<name>\AppData\Local\Programs\VoiceCraft`, so a
+Windows user name with an accent or non-Latin letters puts the whole bundle on a
+non-ASCII path. espeak-ng (used by Kokoro ONNX and Piper) then fails with
+`language "en-us" is not supported by the espeak backend`. The 8.3 short path
+does **not** help; it fails the same way.
+
+`core.paths.ascii_path()` copies the espeak DLL and data (about 20 MB per
+folder) once into `%ProgramData%\VoiceCraft-ascii-<version>-<hash>` (fallback
+`C:\Users\Public`), and both engines are handed that copy. The uninstaller
+removes these folders. Test any espeak-related change by installing into a
+folder such as `%LOCALAPPDATA%\Programs\VoiceCraft_tëst` and running
+`TTS_Studio.exe --selftest report.json` from there, because the build's own
+self-test runs from the ASCII repo path and cannot catch this.
+
+Not covered: the Kokoro PyTorch fallback (misaki/phonemizer) and MeloTTS
+non-English languages have not been tested from a non-ASCII path.
 
 ### Environment traps on this machine
 
