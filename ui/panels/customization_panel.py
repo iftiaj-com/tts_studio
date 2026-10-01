@@ -5,7 +5,7 @@ import tempfile
 import customtkinter as ctk
 from tkinter import filedialog
 import pygame
-from pydub import AudioSegment
+from core.audio_io import load_segment
 from core.constants import COLORS, FONTS
 from ui.theme import card, styled_slider
 from effects.audio_effects import AudioEffects
@@ -324,6 +324,9 @@ class CustomizationPanel:
 
     # ── Load Sound Helpers ─────────────────────────────────────────
     def _load_custom_amb_sound(self, fp):
+        if not pygame.mixer.get_init():   # no audio device: preview unavailable
+            self._amb_label.configure(text="No audio device", text_color=COLORS["warning"])
+            return
         pygame.mixer.set_num_channels(8)
         if not self._ambiance_channel:
             self._ambiance_channel = pygame.mixer.Channel(1)
@@ -334,7 +337,7 @@ class CustomizationPanel:
                 self._temp_dirs.append(tmp)
                 import os
                 wav = os.path.join(tmp, "temp_amb.wav")
-                AudioSegment.from_file(fp).export(wav, format="wav")
+                load_segment(fp).export(wav, format="wav")
                 self._amb_sound = pygame.mixer.Sound(wav)
             else:
                 self._amb_sound = pygame.mixer.Sound(fp)
@@ -352,7 +355,10 @@ class CustomizationPanel:
             
         self._amb_label.configure(text="Generating...", text_color=COLORS["warning"])
         self._amb_sound = None
-        
+
+        if not pygame.mixer.get_init():   # no audio device: preview unavailable
+            self._amb_label.configure(text="No audio device", text_color=COLORS["warning"])
+            return
         pygame.mixer.set_num_channels(8)
         if not self._ambiance_channel:
             self._ambiance_channel = pygame.mixer.Channel(1)
@@ -381,7 +387,7 @@ class CustomizationPanel:
 
     # ── Import ─────────────────────────────────────────────────────
     def _import_amb(self):
-        ftypes = [("Audio Files", "*.mp3 *.wav *.ogg *.flac *.m4a"), ("All Files", "*.*")]
+        ftypes = [("Audio Files", "*.mp3 *.wav *.ogg *.flac"), ("All Files", "*.*")]
         fp = filedialog.askopenfilename(title="Select Ambiance Music", filetypes=ftypes)
         if not fp:
             return

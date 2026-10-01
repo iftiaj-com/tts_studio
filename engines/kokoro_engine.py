@@ -3,6 +3,7 @@ engines/kokoro_engine.py  –  Kokoro-82M / kokoro-onnx adapter
 """
 import os
 from engines.base import BaseTTSEngine
+from core import paths
 from core.constants import KOKORO_VOICES
 
 try:
@@ -117,6 +118,17 @@ def _create_onnx_pipeline(model_path, voices_path, device_str, status_cb=None):
     """
     from kokoro_onnx import Kokoro
 
+    espeak_config = None
+    try:
+        import espeakng_loader
+        from kokoro_onnx.config import EspeakConfig
+        # espeak-ng can't read its data through a non-ASCII install path.
+        espeak_config = EspeakConfig(
+            lib_path=paths.ascii_path(espeakng_loader.get_library_path()),
+            data_path=paths.ascii_path(espeakng_loader.get_data_path()))
+    except Exception as e:
+        print(f"Using kokoro-onnx default espeak paths: {e}")
+
     providers = ["CPUExecutionProvider"]
     if device_str == "cuda":
         try:
@@ -134,14 +146,43 @@ def _create_onnx_pipeline(model_path, voices_path, device_str, status_cb=None):
             session = ort.InferenceSession(model_path, providers=providers)
             if status_cb:
                 status_cb(f"Kokoro ONNX running on {session.get_providers()[0]}")
-            return Kokoro.from_session(session, voices_path)
+            return Kokoro.from_session(session, voices_path, espeak_config=espeak_config)
     except Exception as e:
         print(f"Explicit ONNX session failed ({e}); using default constructor.")
 
     # Older kokoro-onnx versions honour the ONNX_PROVIDER env var instead.
     if providers[0] == "CUDAExecutionProvider":
         os.environ.setdefault("ONNX_PROVIDER", "CUDAExecutionProvider")
-    return Kokoro(model_path, voices_path)
+    return Kokoro(model_path, voices_path, espeak_config=espeak_config)
+
+
+_ONNX_MODEL_NAME  = "kokoro-v1.0.onnx"
+_ONNX_VOICES_NAME = "voices.bin"
+
+
+def _is_user_copy(path):
+    return paths.FROZEN and os.path.dirname(os.path.abspath(path)) == \
+        os.path.abspath(str(paths.user_dir("models")))
+
+
+def _weight_paths():
+    """(model, voices) to load: a complete user download wins over the bundle.
+
+    Frozen builds bundle both files read-only next to the code; anything the
+    app downloads itself lives in %LOCALAPPDATA%\\VoiceCraft\\models. In dev
+    both resolve to the repo root, as before.
+    """
+    if not paths.FROZEN:
+        root = str(paths.bundle_dir())
+        return (os.path.join(root, _ONNX_MODEL_NAME),
+                os.path.join(root, _ONNX_VOICES_NAME))
+    user, bundle = str(paths.user_dir("models")), str(paths.bundle_dir())
+    picked = []
+    for name in (_ONNX_MODEL_NAME, _ONNX_VOICES_NAME):
+        u, b = os.path.join(user, name), os.path.join(bundle, name)
+        ok = os.path.exists(u) and (name != _ONNX_MODEL_NAME or _onnx_is_complete(u))
+        picked.append(u if ok or not os.path.exists(b) else b)
+    return tuple(picked)
 
 
 class KokoroEngine(BaseTTSEngine):
@@ -169,17 +210,19 @@ class KokoroEngine(BaseTTSEngine):
             self._use_onnx = False
             return self._pipelines[torch_key]
 
-        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-        model_path = os.path.join(project_root, "kokoro-v1.0.onnx")
-        voices_path = os.path.join(project_root, "voices.bin")
+        model_path, voices_path = _weight_paths()
 
         # Weights that exist but are truncated are worse than absent: they pass
         # every exists() gate below and then fail deep inside onnxruntime.
         if os.path.exists(model_path) and not _onnx_is_complete(model_path):
-            print(f"Discarding truncated Kokoro ONNX weights at {model_path}")
+            print(f"Ignoring truncated Kokoro ONNX weights at {model_path}")
             if status_cb:
                 status_cb("⚠ Kokoro ONNX weights incomplete — re-downloading.")
-            os.remove(model_path)
+            if paths.FROZEN and not _is_user_copy(model_path):
+                # The bundled copy is read-only; re-download into the user dir.
+                model_path = os.path.join(str(paths.user_dir("models")), _ONNX_MODEL_NAME)
+            else:
+                os.remove(model_path)
 
         # Prefer local ONNX pipeline if weights exist to avoid Hugging Face network freezes
         if os.path.exists(model_path):

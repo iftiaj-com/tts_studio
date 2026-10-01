@@ -16,6 +16,8 @@ import random
 import numpy as np
 from pydub import AudioSegment
 
+from core.audio_io import load_segment
+
 try:
     import librosa
     _LIBROSA_AVAILABLE = True
@@ -40,7 +42,7 @@ class AudioEffects:
     @staticmethod
     def load_wav_as_float(wav_path):
         """Load a WAV file as a float32 numpy array + sample rate."""
-        audio = AudioSegment.from_file(wav_path)
+        audio = load_segment(wav_path)
         audio = audio.set_channels(1)
         sr = audio.frame_rate
         samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
@@ -275,7 +277,7 @@ class AudioEffects:
 
         elif os.path.exists(environment):
             try:
-                bg_audio = AudioSegment.from_file(environment).set_channels(1).set_frame_rate(sr)
+                bg_audio = load_segment(environment).set_channels(1).set_frame_rate(sr)
                 bg_samples = np.array(bg_audio.get_array_of_samples(), dtype=np.float32) / (2 ** 15)
                 if len(bg_samples) < n:
                     repeats = int(np.ceil(n / len(bg_samples)))

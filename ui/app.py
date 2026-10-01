@@ -17,7 +17,8 @@ import threading
 import subprocess
 import re
 
-# Pyinstaller windowed-mode fix
+# Pyinstaller windowed-mode fix. tts_app.py normally routes these to a log
+# file first (core.paths.configure_runtime); this is the last-resort guard.
 if sys.stdout is None:
     sys.stdout = io.StringIO()
 if sys.stderr is None:
@@ -32,6 +33,9 @@ from pydub import AudioSegment
 from pydub import silence as pydub_silence
 
 from core.constants import COLORS, FONTS
+from core import paths
+from core.audio_io import load_segment, export_mp3
+from core.version import APP_TITLE
 from ui.theme import card
 from ui.panels.text_panel          import TextPanel
 from ui.panels.engine_panel        import EnginePanel
@@ -56,7 +60,7 @@ class TTSStudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("TTS Studio")
+        self.title(APP_TITLE)
         self.geometry("1180x680")
         self.minsize(1100, 600)
         self.configure(fg_color=COLORS["bg_dark"])
@@ -90,8 +94,18 @@ class TTSStudioApp(ctk.CTk):
         if Pyttsx3Engine.is_available():
             self._system_voices = Pyttsx3Engine.load_system_voices()
 
-        pygame.mixer.init()
+        # No audio device (some VMs, RDP sessions) must not stop the window
+        # from opening; generation and saving still work without playback.
+        self._audio_error = None
+        try:
+            pygame.mixer.init()
+        except Exception as e:
+            self._audio_error = str(e)
+            print(f"Audio output unavailable: {e}")
         self._build_ui()
+        if self._audio_error:
+            self._set_status(f"⚠  No audio output device — playback disabled ({self._audio_error})",
+                             COLORS["warning"])
 
     # ──────────────────────────────────────────────────────────────
     #  UI
@@ -109,10 +123,12 @@ class TTSStudioApp(ctk.CTk):
         bar = ctk.CTkFrame(header, width=5, height=50,
                            fg_color=COLORS["accent_primary"], corner_radius=3)
         bar.grid(row=0, column=0, rowspan=2, padx=(0, 14), sticky="ns")
-        ctk.CTkLabel(header, text="🎙  TTS Studio", font=FONTS["title"],
+        ctk.CTkLabel(header, text=f"🎙  {APP_TITLE}", font=FONTS["title"],
                      text_color=COLORS["text_primary"]).grid(row=0, column=1, sticky="w")
+        engine_names = " + ".join(e.name.split("(")[0].split(" ")[0]
+                                  for e in self._available_engines)
         ctk.CTkLabel(header,
-                     text="Text-to-Speech Studio  •  gTTS + Edge + Kokoro + Melo + Piper + Audio Effects",
+                     text=f"Text-to-Speech Studio  •  {engine_names} + Audio Effects",
                      font=FONTS["body_small"],
                      text_color=COLORS["text_muted"]).grid(row=1, column=1, sticky="w")
 
@@ -407,7 +423,7 @@ class TTSStudioApp(ctk.CTk):
                     progress(0.45 + 0.35 * stages_done / dsp_stages)
 
                 try:
-                    seg = AudioSegment.from_file(playback_file)   # single decode
+                    seg = load_segment(playback_file)   # single decode
 
                     # ── Skip silences (pydub, in memory) ───────────
                     if needs_silence:
@@ -538,11 +554,13 @@ class TTSStudioApp(ctk.CTk):
                 try:
                     mp3_out = os.path.join(tmp_dir, "final.mp3")
                     src_seg = (processed_seg if processed_seg is not None
-                               else AudioSegment.from_file(save_file))
-                    src_seg.export(mp3_out, format="mp3", bitrate="192k")
+                               else load_segment(save_file))
+                    export_mp3(src_seg, mp3_out)
                     self._temp_mp3 = mp3_out
-                except Exception:
-                    pass
+                except Exception as mp3_err:
+                    # WAV is still saved; say why MP3 is missing from the dialog.
+                    print(f"MP3 export failed: {mp3_err}")
+                    warn(f"⚠ MP3 export failed, WAV only: {mp3_err}")
 
             # Clean up temp dirs from previous generations
             for old_dir in list(self._tmp_dirs):
@@ -571,6 +589,10 @@ class TTSStudioApp(ctk.CTk):
         pf = self._temp_playback_file
         if not pf or not os.path.exists(pf):
             self._set_status("⚠  No audio to play — generate first", COLORS["warning"])
+            return
+        if self._audio_error:
+            self._set_status("⚠  No audio output device — save the file to listen",
+                             COLORS["warning"])
             return
         if self._is_playing:
             pygame.mixer.music.stop()
@@ -652,8 +674,7 @@ class TTSStudioApp(ctk.CTk):
         ts = time.strftime('%Y%m%d_%H%M%S')
         initial_name = f"{prefix}_{ts}{default_ext}"
 
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output")
-        os.makedirs(output_dir, exist_ok=True)
+        output_dir = str(paths.output_dir())
         filepath = filedialog.asksaveasfilename(
             title="Save Speech Audio",
             defaultextension=default_ext,
@@ -693,8 +714,7 @@ class TTSStudioApp(ctk.CTk):
         ts = time.strftime('%Y%m%d_%H%M%S')
         initial_name = f"{prefix}_{ts}.srt"
 
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output")
-        os.makedirs(output_dir, exist_ok=True)
+        output_dir = str(paths.output_dir())
         filepath = filedialog.asksaveasfilename(
             title="Save Subtitles (SRT)",
             defaultextension=".srt",
@@ -713,12 +733,16 @@ class TTSStudioApp(ctk.CTk):
             self._set_status(f"❌  Save error: {e}", COLORS["error"])
 
     def _on_open_folder(self):
-        target = (self._final_saved_file or self._temp_mp3 or self._temp_save_file)
-        if target and os.path.exists(target):
-            try:
+        # Before the first save, open the save folder rather than the temp
+        # dir, which is deleted on the next generation.
+        target = self._final_saved_file
+        try:
+            if target and os.path.exists(target):
                 subprocess.run(['explorer', '/select,', os.path.normpath(target)])
-            except Exception as e:
-                self._set_status(f"❌  Could not open folder: {e}", COLORS["error"])
+            else:
+                os.startfile(str(paths.output_dir()))
+        except Exception as e:
+            self._set_status(f"❌  Could not open folder: {e}", COLORS["error"])
 
     # ──────────────────────────────────────────────────────────────
     #  CLEANUP

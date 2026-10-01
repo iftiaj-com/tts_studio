@@ -131,8 +131,11 @@ KOKORO_VOICES = {
     }
 }
 
+# Only voices whose training data may be redistributed. en_US-lessac was
+# dropped: its Blizzard 2013 dataset licence is research-only. build_exe.py
+# bundles exactly these, plus each voice's MODEL_CARD.
 PIPER_VOICES = {
-    "US English (Lessac) - Low Quality": "en_US-lessac-low",
+    "US English (LJSpeech) - Medium Quality": "en_US-ljspeech-medium",
 }
 
 MELO_VOICES = {
